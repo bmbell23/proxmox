@@ -1,0 +1,27 @@
+{
+  "description": "Ubuntu VM profile for lightweight k3s/k8s lab nodes",
+  "os_family": "ubuntu",
+  "iso_storage": "boston-isos",
+  "iso_match": "ubuntu-*.iso",
+  "defaults": {
+    "memory": 8192,
+    "cores": 4,
+    "sockets": 1,
+    "disk_gb": 60,
+    "disk_storage": "local-lvm",
+    "bridge": "vmbr0",
+    "cpu": "host",
+    "machine": "q35",
+    "bios": "seabios",
+    "scsi_hw": "virtio-scsi-pci",
+    "enable_agent": true,
+    "onboot": true,
+    "tags": "k3s;ubuntu;lab"
+  },
+  "os_overrides": {
+    "ubuntu": {
+      "enable_agent": true,
+      "tags": "k3s;ubuntu;lab"
+    }
+  }
+}
