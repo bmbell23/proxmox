@@ -49,6 +49,30 @@ Create a small parity set:
   --yes
 ```
 
+Finalize an ISO install (remove installer media + boot from disk):
+
+```bash
+./create_vm_from_iso.py --finalize-vmid 100 --yes
+```
+
+Finalize and reboot immediately:
+
+```bash
+./create_vm_from_iso.py --finalize-vmid 100 --reboot --yes
+```
+
+Clone from a prebuilt template (recommended for repeatable automation):
+
+```bash
+./create_vm_from_iso.py \
+  --profile ubuntu-k3s-node \
+  --name k3s-node \
+  --clone-from 9000 \
+  --count 3 \
+  --start \
+  --yes
+```
+
 ## Profile format
 
 Example fields used in `profiles/ubuntu-k3s-node.json`:
@@ -67,6 +91,14 @@ Example fields used in `profiles/ubuntu-k3s-node.json`:
 - If `--vmid` is omitted, script attempts `pvesh get /cluster/nextid`.
 - Run with `--non-interactive` in automation pipelines.
 - Use `--dry-run` to verify generated `qm` commands safely.
+- After completing an ISO install, run `--finalize-vmid` to detach `ide2` and prevent `/cdrom` unmount prompts on reboot.
+
+## Automating install steps by OS
+
+- ISO installs are typically interactive unless you wire OS-specific unattended installers.
+- Linux (Ubuntu/Debian): easiest path is install once, convert to template, then use `--clone-from`.
+- Windows: usually automate via unattend/autounattend image workflow, then clone template.
+- For k3s lab nodes, template cloning is usually the fastest and most reliable route.
 
 ## Commit workflow (gvc)
 

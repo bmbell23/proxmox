@@ -9,6 +9,8 @@
     "sockets": 1,
     "disk_gb": 60,
     "disk_storage": "local-lvm",
+    "clone_from": null,
+    "full_clone": false,
     "bridge": "vmbr0",
     "cpu": "host",
     "machine": "q35",

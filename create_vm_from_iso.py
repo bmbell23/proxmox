@@ -40,6 +40,8 @@ class VmConfig:
     scsi_hw: str
     enable_agent: bool
     onboot: bool
+    clone_from: int | None
+    full_clone: bool
     tags: str | None = None
 
 
@@ -197,6 +199,8 @@ def build_vm_config(
         scsi_hw=defaults.get("scsi_hw", "virtio-scsi-pci"),
         enable_agent=bool(defaults.get("enable_agent", True)),
         onboot=bool(defaults.get("onboot", True)),
+        clone_from=(args.clone_from if args.clone_from is not None else defaults.get("clone_from")),
+        full_clone=bool(defaults.get("full_clone", False)),
         tags=defaults.get("tags"),
     )
 
@@ -216,6 +220,8 @@ def apply_profile_overrides(config: VmConfig, overrides: dict[str, Any]) -> VmCo
         "scsi_hw",
         "enable_agent",
         "onboot",
+        "clone_from",
+        "full_clone",
         "tags",
     }
     safe_updates = {k: v for k, v in overrides.items() if k in allowed}
@@ -243,30 +249,67 @@ def create_vm(config: VmConfig, dry_run: bool, start: bool) -> None:
     if shutil.which("qm") is None and not dry_run:
         raise RuntimeError("`qm` command not found. Run this on a Proxmox node or use --dry-run.")
 
-    run_cmd(
-        [
-            "qm",
-            "create",
-            str(config.vmid),
-            "--name",
-            config.name,
-            "--memory",
-            str(config.memory),
-            "--cores",
-            str(config.cores),
-            "--sockets",
-            str(config.sockets),
-            "--cpu",
-            config.cpu,
-            "--machine",
-            config.machine,
-            "--bios",
-            config.bios,
-            "--scsihw",
-            config.scsi_hw,
-        ],
-        dry_run,
-    )
+    if config.clone_from is not None:
+        run_cmd(
+            [
+                "qm",
+                "clone",
+                str(config.clone_from),
+                str(config.vmid),
+                "--name",
+                config.name,
+                "--full",
+                bool_to_int(config.full_clone),
+            ],
+            dry_run,
+        )
+        run_cmd(
+            [
+                "qm",
+                "set",
+                str(config.vmid),
+                "--memory",
+                str(config.memory),
+                "--cores",
+                str(config.cores),
+                "--sockets",
+                str(config.sockets),
+                "--cpu",
+                config.cpu,
+                "--machine",
+                config.machine,
+                "--bios",
+                config.bios,
+                "--scsihw",
+                config.scsi_hw,
+            ],
+            dry_run,
+        )
+    else:
+        run_cmd(
+            [
+                "qm",
+                "create",
+                str(config.vmid),
+                "--name",
+                config.name,
+                "--memory",
+                str(config.memory),
+                "--cores",
+                str(config.cores),
+                "--sockets",
+                str(config.sockets),
+                "--cpu",
+                config.cpu,
+                "--machine",
+                config.machine,
+                "--bios",
+                config.bios,
+                "--scsihw",
+                config.scsi_hw,
+            ],
+            dry_run,
+        )
 
     if config.tags:
         run_cmd(["qm", "set", str(config.vmid), "--tags", config.tags], dry_run)
@@ -275,20 +318,35 @@ def create_vm(config: VmConfig, dry_run: bool, start: bool) -> None:
         ["qm", "set", str(config.vmid), "--net0", f"virtio,bridge={config.bridge}"],
         dry_run,
     )
-    run_cmd(
-        ["qm", "set", str(config.vmid), "--scsi0", f"{config.disk_storage}:{config.disk_gb}"],
-        dry_run,
-    )
-    run_cmd(
-        ["qm", "set", str(config.vmid), "--ide2", f"{config.iso_storage}:iso/{config.iso_file},media=cdrom"],
-        dry_run,
-    )
-    run_cmd(["qm", "set", str(config.vmid), "--boot", "order=ide2;scsi0"], dry_run)
+    if config.clone_from is None:
+        run_cmd(
+            ["qm", "set", str(config.vmid), "--scsi0", f"{config.disk_storage}:{config.disk_gb}"],
+            dry_run,
+        )
+        run_cmd(
+            ["qm", "set", str(config.vmid), "--ide2", f"{config.iso_storage}:iso/{config.iso_file},media=cdrom"],
+            dry_run,
+        )
+        run_cmd(["qm", "set", str(config.vmid), "--boot", "order=ide2;scsi0"], dry_run)
+    else:
+        run_cmd(["qm", "set", str(config.vmid), "--boot", "order=scsi0"], dry_run)
     run_cmd(["qm", "set", str(config.vmid), "--agent", f"enabled={bool_to_int(config.enable_agent)}"], dry_run)
     run_cmd(["qm", "set", str(config.vmid), "--onboot", bool_to_int(config.onboot)], dry_run)
 
     if start:
         run_cmd(["qm", "start", str(config.vmid)], dry_run)
+
+
+def finalize_vm_install(vmid: int, dry_run: bool, reboot: bool) -> None:
+    """Finalize an ISO-installed VM by removing installer media and booting from disk."""
+    if shutil.which("qm") is None and not dry_run:
+        raise RuntimeError("`qm` command not found. Run this on a Proxmox node or use --dry-run.")
+
+    run_cmd(["qm", "set", str(vmid), "--delete", "ide2"], dry_run)
+    run_cmd(["qm", "set", str(vmid), "--boot", "order=scsi0"], dry_run)
+
+    if reboot:
+        run_cmd(["qm", "reboot", str(vmid)], dry_run)
 
 
 def parse_args() -> argparse.Namespace:
@@ -299,6 +357,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--count", type=int, default=1, help="Create N VMs")
     parser.add_argument("--iso", help="Override ISO file path")
     parser.add_argument("--disk-storage", help="Override disk storage target (e.g. local-lvm)")
+    parser.add_argument("--clone-from", type=int, help="Clone from an existing template/base VMID instead of ISO install")
+    parser.add_argument("--finalize-vmid", type=int, help="Finalize an existing VM install by removing ide2 and setting boot order=scsi0")
+    parser.add_argument("--reboot", action="store_true", help="Reboot VM after --finalize-vmid")
     parser.add_argument("--start", action="store_true", help="Start the VM(s) after creation")
     parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     parser.add_argument("--non-interactive", action="store_true", help="Fail instead of prompting")
@@ -316,6 +377,14 @@ def main() -> int:
     if args.list_profiles:
         for p in list_profiles():
             print(p.stem)
+        return 0
+
+    if args.finalize_vmid is not None:
+        print(f"Finalizing install for VMID {args.finalize_vmid}...")
+        finalize_vm_install(args.finalize_vmid, dry_run=args.dry_run, reboot=args.reboot)
+        if args.dry_run:
+            print("\nDry run complete. No changes were made.")
+        print("\nDone.")
         return 0
 
     if not args.profile:
@@ -356,8 +425,9 @@ def main() -> int:
 
     print("\nCreation plan:")
     for cfg in plan:
+        mode = f"clone:{cfg.clone_from}" if cfg.clone_from is not None else "iso"
         print(
-            f"- vmid={cfg.vmid} name={cfg.name} iso={cfg.iso_file} "
+            f"- vmid={cfg.vmid} name={cfg.name} mode={mode} iso={cfg.iso_file} "
             f"disk={cfg.disk_storage}:{cfg.disk_gb}GB mem={cfg.memory}MB cores={cfg.cores}"
         )
 
