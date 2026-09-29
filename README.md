@@ -126,3 +126,7 @@ What `gvc` does in this repo:
 - Creates commit message in format: `vX.Y.Z: <message>`
 - Creates annotated git tag: `vX.Y.Z`
 - Pushes branch and tag to `origin`
+
+## Paul (the office agent for this host)
+
+Paul (@paul) watches this host, working read-only through `host/paul-dispatch`. His rules are in `CLAUDE.md`, and the one-time root setup is in `host/SETUP.md` (bmbell23/agent-bus#91).

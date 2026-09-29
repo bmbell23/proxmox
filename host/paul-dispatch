@@ -1,0 +1,31 @@
+#!/bin/bash
+# Paul's only way onto this host (bmbell23/agent-bus#91). Installed at
+# /usr/local/sbin/paul-dispatch and forced for his key in ~paul/.ssh/authorized_keys:
+#   command="/usr/local/sbin/paul-dispatch",restrict ssh-ed25519 AAAA… paul@agent-bus
+# Read-only verbs only. Anything else exits 126; there is no shell.
+set -uo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+read -r verb arg rest <<<"${SSH_ORIGINAL_COMMAND:-help}"
+[ -n "${rest:-}" ] && { echo "one argument at most" >&2; exit 126; }
+logger -t paul-dispatch "verb=$verb arg=${arg:-}"
+
+case "$verb" in
+  help)     echo "verbs: health disks mounts smart <sdX> vms jobs vzdump-logs storage updates timers errors [since] backups" ;;
+  health)   hostname; uptime; pveversion; df -h -x tmpfs -x devtmpfs -x efivarfs; free -h ;;
+  disks)    lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL ;;
+  mounts)   findmnt -D -t ext4,xfs,vfat,fuseblk,ntfs,ntfs3; grep -v '^\s*#' /etc/fstab ;;
+  smart)    [[ "${arg:-}" =~ ^sd[a-z]$|^nvme[0-9]n[0-9]$ ]] || { echo "smart <sdX|nvmeXnY>" >&2; exit 126; }
+            sudo -n /usr/sbin/smartctl -H -A "/dev/$arg" ;;
+  vms)      sudo -n /usr/sbin/qm list ;;
+  jobs)     cat /etc/pve/jobs.cfg; grep -v '^\s*#' /etc/vzdump.conf ;;
+  vzdump-logs) ls -lt /var/log/vzdump/ | head -20
+            for f in $(ls -t /var/log/vzdump/*.log 2>/dev/null | head -3); do echo "--- $f"; tail -8 "$f"; done ;;
+  storage)  cat /etc/pve/storage.cfg; lvs --units g 2>/dev/null ;;
+  updates)  apt list --upgradable 2>/dev/null | tail -n +2 | wc -l; apt list --upgradable 2>/dev/null | grep -i -E "pve|proxmox|kernel" | head -20 ;;
+  timers)   systemctl list-timers --all --no-pager ;;
+  errors)   since="${arg:-24h}"; [[ "$since" =~ ^[0-9]+[hd]$ ]] || { echo "errors [Nh|Nd]" >&2; exit 126; }
+            journalctl -p err --since "-${since/d/ days}" --no-pager | tail -60 ;;
+  backups)  ls -lt /mnt/boston/proxmox-backups/dump/ | head -12; du -sh /mnt/boston/proxmox-backups /mnt/boston/proxmox-config-backups 2>/dev/null ;;
+  *)        echo "not allowed: $verb (try: help)" >&2; exit 126 ;;
+esac
