@@ -78,6 +78,9 @@ tools() {
   apt-get install -y -qq git restic rsync samba >/dev/null
   install -m 755 -o root -g root "$REPO/host/paul-dispatch" /usr/local/sbin/paul-dispatch
   install -m 755 -o root -g root "$REPO/host/peter-restic"  /usr/local/sbin/peter-restic
+  local forced; forced=$(grep -o 'command="[^"]*"' /home/peter/.ssh/authorized_keys 2>/dev/null | cut -d'"' -f2 || true)
+  [ "$forced" = /usr/local/sbin/paul-dispatch ] && skip "peter's key runs /usr/local/sbin/paul-dispatch" \
+    || loud "peter's key forces '${forced:-nothing}', not /usr/local/sbin/paul-dispatch: tell Peter"
   if grep -q peter-restic /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line"
   else { cat /etc/sudoers.d/peter 2>/dev/null || true
          echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic'; } | sudoers /etc/sudoers.d/peter; fi
@@ -161,8 +164,11 @@ EOF
   local tokfile=/root/.pbs-fenway-token secret
   if [ -s "$tokfile" ]; then skip "token pve@pbs!vzdump"
   else
-    (umask 077; $pbm user generate-token pve@pbs vzdump --output-format json \
-      | sed -n 's/.*"value":"\([^"]*\)".*/\1/p' > "$tokfile")
+    # A token left by an earlier, interrupted run has a secret nobody saved: replace it.
+    $pbm user list-tokens pve@pbs 2>/dev/null | grep -q 'pve@pbs!vzdump' && $pbm user delete-token pve@pbs vzdump
+    # generate-token has no --output-format (#18); it prints JSON, spaced or not, depending on the version.
+    local out; out=$($pbm user generate-token pve@pbs vzdump)
+    (umask 077; sed -n 's/.*"value": *"\([^"]*\)".*/\1/p' <<<"$out" > "$tokfile")
     [ -s "$tokfile" ] || { $pbm user delete-token pve@pbs vzdump; rm -f "$tokfile"
                            echo "couldn't read the token secret; removed the token, re-run to make a new one" >&2; exit 1; }
   fi
