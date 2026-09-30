@@ -10,9 +10,9 @@ case "$repo" in
   documents) src=/mnt/remote/boston/documents; share=/mnt/remote/boston ;;
   *)         echo "unknown repo: $repo (known: documents)" >&2; exit 126 ;;
 esac
-export RESTIC_REPOSITORY=/mnt/raid1/restic/$repo RESTIC_PASSWORD_FILE=/root/.restic/$repo.pass
-scratch=/mnt/hdd/restore-test/$repo
-# A future `media` repo lives on /mnt/hdd itself: never full-restore it there. Give it a sample
+export RESTIC_REPOSITORY=/mnt/beacon/restic/$repo RESTIC_PASSWORD_FILE=/root/.restic/$repo.pass
+scratch=/mnt/brighton/restore-test/$repo
+# A future `media` repo lives on /mnt/brighton itself: never full-restore it there. Give it a sample
 # restore (`restic restore latest --include <a few dirs>`) to a disk other than its own.
 
 # If a disk isn't mounted, its path is a bare dir on pve01's 94G root: refuse rather than fill it.
@@ -28,14 +28,15 @@ case "$action" in
   check)      restic check ;;
   backup|restore-test|check-data) bg ;;
   run-backup)
-    need_mount /mnt/raid1
+    need_mount /mnt/beacon
     ls "$src" >/dev/null || exit 1                                     # triggers the automount
+    [ -n "$(ls -A "$src")" ] || { echo "$src is empty (boston's disk missing behind the share? #5); refusing" >&2; exit 1; }
     findmnt -no OPTIONS -t cifs "$share" | grep -q '^ro,' || { echo "$share is not mounted read-only; refusing" >&2; exit 1; }
     restic backup "$src" --tag "$repo" ;;
   run-restore-test)
     # Compares the latest snapshot with the LIVE source: a DIFF can mean "edited since the snapshot",
     # not only "corrupt". Run it right after a backup. On a DIFF the scratch copy stays, as evidence.
-    need_mount /mnt/raid1; need_mount /mnt/hdd
+    need_mount /mnt/beacon; need_mount /mnt/brighton
     ls "$src" >/dev/null || exit 1
     restic snapshots --tag "$repo" --latest 1
     rm -rf "$scratch" && mkdir -p "$scratch"
