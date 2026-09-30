@@ -40,3 +40,15 @@ chown paul:paul /home/paul/.ssh/authorized_keys && chmod 600 /home/paul/.ssh/aut
 Does `sudo` for **brandon** on Proxmox ask for a password? If it doesn't, any process on dockerhost running as brandon
 (including agents) could reach root there with `ssh proxmox sudo …`. The office policy now denies agents
 `ssh … proxmox`, but that's a text rule, not a wall. A password on brandon's sudo there would be the wall.
+
+## pve01: Peter's restic verb (#7, Brandon as root on pve01, once)
+pve01 runs the same dispatcher for user `peter`. The `restic` verb calls `peter-restic` through one sudoers line.
+That script knows fixed repos and sources and never runs `init`, `forget`, `prune`, `key` or `unlock`.
+```bash
+scp brandon@10.0.0.160:/home/brandon/projects/Proxmox/host/{paul-dispatch,peter-restic} /tmp/
+install -m 755 -o root -g root /tmp/paul-dispatch /usr/local/sbin/paul-dispatch
+install -m 755 -o root -g root /tmp/peter-restic  /usr/local/sbin/peter-restic
+echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic' >> /etc/sudoers.d/peter
+visudo -cf /etc/sudoers.d/peter
+```
+Check from dockerhost: `bin/pve01 restic snapshots` lists snapshots, and `bin/pve01 restic forget` exits 126.
