@@ -1,7 +1,13 @@
 # pve01 setup: disk names, /opt/homelab, restic, pictures copy, PBS (#11)
 
-Brandon runs these **as root on pve01** (10.0.0.197), in order, once this PR is merged (step 3 clones `main`).
-Peter prepared them and checks each step afterwards from dockerhost with `bin/pve01`. Nothing here deletes data.
+**Run the script, not this page.** Steps 0 to 6 are `host/pve01-setup.sh` (#13). As root on pve01:
+```bash
+git -C /opt/homelab pull --ff-only && bash /opt/homelab/host/pve01-setup.sh
+```
+It checks before each step and skips what's done, so it's safe to re-run, or run one step (`… pve01-setup.sh samba`).
+It stops twice for you: the restic password and the PBS token (both go in Vaultwarden), and once for a Samba password.
+This page explains what each step does. Step 7 (the VM restore test) stays manual. Nothing here deletes data.
+Samba (#13): `beacon` and `brighton` are shared **read-only**, user `brandon`. Backups must not be writable from the network.
 
 The names (Brandon, 2026-09-30):
 
