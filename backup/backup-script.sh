@@ -47,6 +47,24 @@ log() {
 # set -e would otherwise exit without saying why (e.g. mkdir on a drive giving I/O errors).
 trap 'rc=$?; log "FAILED: \"$BASH_COMMAND\" exited $rc (line $LINENO), aborting"; exit $rc' ERR
 
+# mountpoint passes on a dead-but-mounted ntfs-3g/FUSE disk (sdc from 2026-05-30 on), and a
+# plain `timeout ls` can hang with it if ls is stuck in the kernel. So ls runs in the background
+# and we stop waiting after 10 s, whether or not it can be killed.
+probe_mount() {
+    local dir="$1" pid i
+    ls "$dir" >/dev/null 2>&1 &
+    pid=$!
+    for i in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid"
+            return
+        fi
+        sleep 0.5
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    return 124
+}
+
 # Preflight check that confirms the mounted destination accepts basic writes.
 preflight_health_check() {
     local probe_file="$BACKUP_ROOT/.backup-healthcheck-$$"
@@ -101,6 +119,18 @@ fi
 
 if ! mountpoint -q "$BACKUP_ROOT"; then
     log "ERROR: Backup drive not mounted at $BACKUP_ROOT"
+    exit 1
+fi
+
+if probe_mount "$BACKUP_ROOT"; then
+    :
+else
+    rc=$?
+    if [ "$rc" -eq 124 ]; then
+        log "FAILED: $BACKUP_ROOT is mounted but ls hung for 10 s (dead disk?)"
+    else
+        log "FAILED: $BACKUP_ROOT is mounted but can't be listed (ls exit $rc; dead disk?)"
+    fi
     exit 1
 fi
 
