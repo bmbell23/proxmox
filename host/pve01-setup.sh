@@ -13,6 +13,18 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 skip() { echo "   already done: $*"; }
 loud() { printf '\n\033[1;33m%s\033[0m\n' "$*"; }
 fstab_has() { grep -qE "^[^#]*[[:space:]]$1[[:space:]]" /etc/fstab; }
+# Installing proxmox-backup-server adds its enterprise repo, which answers 401 without a subscription and
+# makes every apt-get update fail (#21). We use pbs-no-subscription, so switch the enterprise one off first.
+apt_update() {
+  local f
+  for f in $(grep -ls 'enterprise.proxmox.com/debian/pbs' /etc/apt/sources.list.d/* || true); do
+    case "$f" in
+      *.sources) grep -qi '^Enabled: *false' "$f" || { sed -i '/^Types:/a Enabled: false' "$f"; echo "   disabled $f"; } ;;
+      *.list)    sed -i 's|^\([[:space:]]*deb \)|# \1|' "$f"; echo "   disabled $f" ;;
+    esac
+  done
+  apt-get update -qq
+}
 # Write a sudoers file only if visudo accepts it: a broken file in sudoers.d breaks sudo for everyone.
 sudoers() {
   local tmp; tmp=$(mktemp); cat > "$tmp"
@@ -74,7 +86,7 @@ fenway() {
 
 tools() {
   say "tools: packages, dispatcher, Peter's restic verb"
-  apt-get update -qq
+  apt_update
   apt-get install -y -qq git restic rsync samba >/dev/null
   install -m 755 -o root -g root "$REPO/host/paul-dispatch" /usr/local/sbin/paul-dispatch
   install -m 755 -o root -g root "$REPO/host/peter-restic"  /usr/local/sbin/peter-restic
@@ -149,7 +161,7 @@ Suites: trixie
 Components: pbs-no-subscription
 Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 EOF
-    apt-get update -qq
+    apt_update
   fi
   dpkg -s proxmox-backup-server >/dev/null 2>&1 && skip "proxmox-backup-server" || apt-get install -y proxmox-backup-server
   local pbm=proxmox-backup-manager
