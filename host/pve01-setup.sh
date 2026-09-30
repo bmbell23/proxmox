@@ -13,6 +13,12 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 skip() { echo "   already done: $*"; }
 loud() { printf '\n\033[1;33m%s\033[0m\n' "$*"; }
 fstab_has() { grep -qE "^[^#]*[[:space:]]$1[[:space:]]" /etc/fstab; }
+# Write a sudoers file only if visudo accepts it: a broken file in sudoers.d breaks sudo for everyone.
+sudoers() {
+  local tmp; tmp=$(mktemp); cat > "$tmp"
+  if visudo -cf "$tmp"; then install -m 440 -o root -g root "$tmp" "$1"; rm -f "$tmp"
+  else rm -f "$tmp"; echo "visudo rejected the new $1; left the old one alone" >&2; exit 1; fi
+}
 
 look() {
   say "look: what's on the two data disks"
@@ -24,14 +30,19 @@ look() {
 
 names() {
   say "names: md0 -> beacon, sdb1 -> brighton"
-  cp -n /etc/fstab "/etc/fstab.bak-$(date +%F)"
+  [ -e "/etc/fstab.bak-$(date +%F)" ] || cp /etc/fstab "/etc/fstab.bak-$(date +%F)"
   local old new dev
-  for pair in "/mnt/raid1 /mnt/beacon /dev/md0" "/mnt/hdd /mnt/brighton /dev/sdb1"; do
-    read -r old new dev <<<"$pair"
+  for pair in "/mnt/raid1 /mnt/beacon" "/mnt/hdd /mnt/brighton"; do
+    read -r old new <<<"$pair"
+    dev=$(findmnt -no SOURCE "$old" || findmnt -no SOURCE "$new" || true)
+    [ -n "$dev" ] || { echo "neither $old nor $new is mounted; stopping" >&2; exit 1; }
     if fstab_has "$new"; then skip "$new in fstab"
     else
+      fstab_has "$old" || { echo "$old isn't in fstab; stopping" >&2; exit 1; }
       mountpoint -q "$old" && umount "$old"
-      sed -i "s|[[:space:]]$old[[:space:]]| $new |" /etc/fstab
+      # nofail: a dead backup disk must not stop pve01 from booting.
+      sed -E -i "/^[[:space:]]*#/!s|[[:space:]]$old[[:space:]]+ext4[[:space:]]+defaults[[:space:]]| $new ext4 defaults,nofail |" /etc/fstab
+      fstab_has "$new" || { echo "fstab edit failed for $old; backup is /etc/fstab.bak-$(date +%F)" >&2; exit 1; }
       echo "   fstab: $old -> $new"
     fi
     [ "$(e2label "$dev")" = "$(basename "$new")" ] || { e2label "$dev" "$(basename "$new")"; echo "   label $dev = $(basename "$new")"; }
@@ -48,9 +59,14 @@ fenway() {
   say "fenway: 300G thin volume on the SSD for PBS"
   if lvs pve/fenway >/dev/null 2>&1; then skip "LV pve/fenway"
   else lvcreate -V 300G -T pve/data -n fenway; fi
-  [ "$(blkid -s TYPE -o value /dev/pve/fenway)" = ext4 ] && skip "ext4 on fenway" || mkfs.ext4 -L fenway /dev/pve/fenway
+  local fs; fs=$(blkid -s TYPE -o value /dev/pve/fenway || true)
+  if [ -z "$fs" ]; then mkfs.ext4 -L fenway /dev/pve/fenway
+  elif [ "$fs" = ext4 ]; then skip "ext4 on fenway"
+  else echo "fenway already holds $fs; not formatting it" >&2; exit 1; fi
   mkdir -p /mnt/fenway
-  fstab_has /mnt/fenway && skip "fenway in fstab" || echo '/dev/pve/fenway /mnt/fenway ext4 defaults,discard 0 2' >> /etc/fstab
+  if fstab_has /mnt/fenway; then skip "fenway in fstab"
+  else [ -z "$(tail -c1 /etc/fstab)" ] || echo >> /etc/fstab
+       echo '/dev/pve/fenway /mnt/fenway ext4 defaults,discard,nofail 0 2' >> /etc/fstab; fi
   systemctl daemon-reload
   mountpoint -q /mnt/fenway || mount /mnt/fenway
   findmnt /mnt/fenway
@@ -62,9 +78,9 @@ tools() {
   apt-get install -y -qq git restic rsync samba >/dev/null
   install -m 755 -o root -g root "$REPO/host/paul-dispatch" /usr/local/sbin/paul-dispatch
   install -m 755 -o root -g root "$REPO/host/peter-restic"  /usr/local/sbin/peter-restic
-  grep -q peter-restic /etc/sudoers.d/peter 2>/dev/null \
-    || echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic' >> /etc/sudoers.d/peter
-  visudo -cf /etc/sudoers.d/peter
+  if grep -q peter-restic /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line"
+  else { cat /etc/sudoers.d/peter 2>/dev/null || true
+         echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic'; } | sudoers /etc/sudoers.d/peter; fi
 }
 
 homelab() {
@@ -72,12 +88,13 @@ homelab() {
   id homelab >/dev/null 2>&1 && skip "user homelab" \
     || useradd --system --create-home --home-dir /var/lib/homelab --shell /bin/bash homelab
   install -d -m 700 -o homelab -g homelab /var/lib/homelab/.ssh
-  echo "from=\"10.0.0.160\",restrict $(cat "$REPO/host/keys/dagu_ed25519.pub")" > /var/lib/homelab/.ssh/authorized_keys
+  local key; key=$(cat "$REPO/host/keys/dagu_ed25519.pub")
+  [[ "$key" == "ssh-ed25519 "* ]] || { echo "no Dagu key in $REPO/host/keys" >&2; exit 1; }
+  echo "from=\"10.0.0.160\",restrict $key" > /var/lib/homelab/.ssh/authorized_keys
   chown homelab:homelab /var/lib/homelab/.ssh/authorized_keys && chmod 600 /var/lib/homelab/.ssh/authorized_keys
-  cat > /etc/sudoers.d/homelab <<'EOF'
+  sudoers /etc/sudoers.d/homelab <<'EOF'
 homelab ALL=(root) NOPASSWD: /usr/bin/git -C /opt/homelab pull --ff-only, /usr/local/sbin/peter-restic run-backup documents, /usr/local/sbin/peter-restic run-restore-test documents
 EOF
-  chmod 440 /etc/sudoers.d/homelab && visudo -cf /etc/sudoers.d/homelab
   mountpoint -q /mnt/brighton || { echo "/mnt/brighton not mounted: run the names step" >&2; exit 1; }
   install -d -o homelab -g homelab /mnt/brighton/pictures
 }
@@ -93,7 +110,7 @@ restic_repo() {
     loud "NEW restic password for 'documents'. Put it in Vaultwarden NOW (item: 'restic documents (pve01 beacon)'):"
     cat "$pass"
     loud "Without it the repo on beacon can't be read. Press Enter once it's saved."
-    read -r
+    read -r || true
   fi
   if [ -f "$repo/config" ]; then skip "repo initialised"
   else mkdir -p /mnt/beacon/restic && restic init --repo "$repo" --password-file "$pass"; fi
@@ -111,10 +128,11 @@ samba() {
     fi
   done
   testparm -s >/dev/null 2>&1 || { echo "testparm failed; the shares are at the end of $conf" >&2; exit 1; }
-  if pdbedit -L 2>/dev/null | grep -q '^brandon:'; then skip "Samba password for brandon"
+  local users; users=$(pdbedit -L 2>/dev/null || true)
+  if grep -q '^brandon:' <<<"$users"; then skip "Samba password for brandon"
   else loud "Set a Samba password for brandon (also worth a Vaultwarden entry):"; smbpasswd -a brandon; fi
   systemctl enable -q --now smbd && systemctl reload smbd
-  testparm -s 2>/dev/null | grep -A4 -E '^\[(beacon|brighton)\]'
+  testparm -s 2>/dev/null | grep -A4 -E '^\[(beacon|brighton)\]' || true
 }
 
 pbs() {
@@ -145,11 +163,15 @@ EOF
   else
     (umask 077; $pbm user generate-token pve@pbs vzdump --output-format json \
       | sed -n 's/.*"value":"\([^"]*\)".*/\1/p' > "$tokfile")
-    [ -s "$tokfile" ] || { echo "couldn't read the token secret" >&2; exit 1; }
+    [ -s "$tokfile" ] || { $pbm user delete-token pve@pbs vzdump; rm -f "$tokfile"
+                           echo "couldn't read the token secret; removed the token, re-run to make a new one" >&2; exit 1; }
   fi
+  # A token only gets what its user also has, so both need the role.
+  $pbm acl update /datastore/fenway DatastoreBackup --auth-id pve@pbs
   $pbm acl update /datastore/fenway DatastoreBackup --auth-id 'pve@pbs!vzdump'
   secret=$(cat "$tokfile")
   local fp; fp=$($pbm cert info | sed -n 's/^Fingerprint (sha256): //p')
+  [ -n "$fp" ] || { echo "couldn't read PBS's certificate fingerprint" >&2; exit 1; }
   pvesm status --storage fenway-pbs >/dev/null 2>&1 && skip "storage fenway-pbs on pve01" \
     || pvesm add pbs fenway-pbs --server 127.0.0.1 --datastore fenway --username 'pve@pbs!vzdump' \
          --password "$secret" --fingerprint "$fp" --content backup
