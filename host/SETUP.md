@@ -42,6 +42,7 @@ Does `sudo` for **brandon** on Proxmox ask for a password? If it doesn't, any pr
 `ssh … proxmox`, but that's a text rule, not a wall. A password on brandon's sudo there would be the wall.
 
 ## pve01: Peter's restic verb (#7, Brandon as root on pve01, once)
+Superseded by step 3 of [PVE01.md](PVE01.md) (#11), which installs from the `/opt/homelab` clone and uses the new mount names.
 pve01 runs the same dispatcher for user `peter`. The `restic` verb calls `peter-restic` through one sudoers line.
 That script knows fixed repos and sources and never runs `init`, `forget`, `prune`, `key` or `unlock`.
 ```bash
