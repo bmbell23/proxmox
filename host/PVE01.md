@@ -136,3 +136,15 @@ Watch it boot in pve01's web console (VM 901 → Console): a login prompt means 
 ~/projects/agent-bus/bin/pve01 restic snapshots   # an empty list, not "not allowed"
 ~/projects/agent-bus/bin/pve01 restic forget      # exit 126
 ```
+
+## 8. k3s01: Peter's VM for k3s (#17)
+Asked for by name, not part of the default run. Bianca's side is agent-bus #116 (`bin/k3s`, key `peter_k3s_ed25519`).
+1. On dockerhost, as brandon, make the key:
+   `ssh-keygen -t ed25519 -N '' -C peter-k3s@agent-bus -f ~/projects/agent-bus/data/keys/peter_k3s_ed25519`
+2. On pve01, as root: `git -C /opt/homelab pull --ff-only && bash /opt/homelab/host/pve01-setup.sh tools k3s`
+   It asks you to paste the `.pub` line. Then it creates VM 201 `k3s01` from the Debian 13 cloud image:
+   4 cores, 6 GB, a 60G disk on `local-lvm`, starting on boot, static `10.0.0.201`.
+   It stops if anything already answers on that IP, or if VM 901 (the restore test) is running.
+   **Check that 10.0.0.201 is outside your router's DHCP range.**
+The `peter` user inside the VM has NOPASSWD sudo. On pve01 itself Peter only gets `bin/pve01 vm …`
+(`peter-vm`: status/start/shutdown/stop/snapshots, VMIDs 200-299). Creating and destroying VMs stays yours.

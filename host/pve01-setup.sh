@@ -81,9 +81,13 @@ tools() {
   local forced; forced=$(grep -o 'command="[^"]*"' /home/peter/.ssh/authorized_keys 2>/dev/null | cut -d'"' -f2 || true)
   [ "$forced" = /usr/local/sbin/paul-dispatch ] && skip "peter's key runs /usr/local/sbin/paul-dispatch" \
     || loud "peter's key forces '${forced:-nothing}', not /usr/local/sbin/paul-dispatch: tell Peter"
-  if grep -q peter-restic /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line"
-  else { cat /etc/sudoers.d/peter 2>/dev/null || true
-         echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic'; } | sudoers /etc/sudoers.d/peter; fi
+  install -m 755 -o root -g root "$REPO/host/peter-vm"      /usr/local/sbin/peter-vm
+  local w
+  for w in peter-restic peter-vm; do
+    if grep -q "/usr/local/sbin/$w\$" /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line for $w"
+    else { cat /etc/sudoers.d/peter 2>/dev/null || true
+           echo "peter ALL=(root) NOPASSWD: /usr/local/sbin/$w"; } | sudoers /etc/sudoers.d/peter; fi
+  done
 }
 
 homelab() {
@@ -188,12 +192,48 @@ EOF
   echo "vzdump 101 --storage fenway-pbs --mode snapshot"
 }
 
+k3s() {
+  say "k3s01: VM 201 for k3s (#17), Peter's, with sudo inside it only"
+  local id=201 ip=10.0.0.201 img=/var/lib/vz/import/debian-13-genericcloud-amd64.qcow2
+  if qm status "$id" >/dev/null 2>&1; then skip "VM $id"; return; fi
+  qm status 901 2>/dev/null | grep -q running && { echo "VM 901 (restore test) is running; finish it first" >&2; exit 1; }
+  ping -c1 -W1 "$ip" >/dev/null 2>&1 && { echo "something already answers on $ip; pick another IP and tell Peter + Bianca" >&2; exit 1; }
+  local gw dns bridge=vmbr0 key=/root/peter_k3s_ed25519.pub
+  gw=$(ip -4 route show default | awk '{print $3; exit}')
+  dns=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)
+  ip link show "$bridge" >/dev/null 2>&1 || { echo "no $bridge on pve01" >&2; exit 1; }
+  # The key is made on dockerhost (Bianca's step): cat ~/projects/agent-bus/data/keys/peter_k3s_ed25519.pub
+  if [ ! -s "$key" ]; then
+    loud "Paste peter_k3s_ed25519.pub from dockerhost (one line), then Enter:"
+    read -r line || true
+    [[ "$line" == "ssh-ed25519 "* ]] || { echo "that isn't an ed25519 public key" >&2; exit 1; }
+    echo "$line" > "$key"
+  fi
+  # Plain key: Proxmox's cloud-init field may reject authorized_keys options. Peter adds from="10.0.0.160"
+  # inside the VM on his first login.
+  local ak; ak=$(mktemp); cat "$key" > "$ak"
+  mkdir -p "$(dirname "$img")"
+  [ -s "$img" ] || { wget -q --show-progress -O "$img.part" \
+      https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2 && mv "$img.part" "$img"; }
+  qm create "$id" --name k3s01 --memory 6144 --cores 4 --cpu host --ostype l26 \
+    --net0 "virtio,bridge=$bridge" --scsihw virtio-scsi-single --serial0 socket --vga serial0 --agent enabled=1 --onboot 1
+  qm set "$id" --scsi0 "local-lvm:0,import-from=$img,discard=on,ssd=1" --boot order=scsi0
+  qm disk resize "$id" scsi0 60G
+  # Cloud-init: user peter (NOPASSWD sudo, the Debian cloud default), Peter's key from dockerhost only, static IP.
+  qm set "$id" --ide2 local-lvm:cloudinit --ciuser peter --sshkeys "$ak" \
+    --ipconfig0 "ip=$ip/24,gw=$gw" --nameserver "$dns"
+  rm -f "$ak"
+  qm start "$id"
+  echo "   k3s01 starting on $ip (gateway $gw, DNS $dns). Peter takes it from here with bin/k3s."
+}
+
 steps=(look names fenway tools homelab restic_repo samba pbs)
 if [ $# -eq 0 ]; then for s in "${steps[@]}"; do "$s"; done
 else
   for s in "$@"; do
     [ "$s" = restic ] && s=restic_repo
-    printf '%s\n' "${steps[@]}" | grep -qx "$s" || { echo "steps: ${steps[*]}" >&2; exit 1; }
+    # k3s isn't in the default run: it's asked for by name.
+    printf '%s\n' "${steps[@]}" k3s | grep -qx "$s" || { echo "steps: ${steps[*]} k3s" >&2; exit 1; }
     "$s"
   done
 fi

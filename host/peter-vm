@@ -1,0 +1,25 @@
+#!/bin/bash
+# Peter's window onto his own VMs on pve01 (bmbell23/proxmox#17). Installed root-owned at /usr/local/sbin/peter-vm
+# and reached only through the dispatcher's `vm` verb, via one sudoers line.
+# VMIDs 200-299 only (k3s01 is 201). No create, destroy, config or disk changes: those stay Brandon's.
+set -uo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+usage() { echo "vm <status|start|shutdown|stop|snapshots|snapshot|rollback|delsnapshot> <200-299> [snapname]" >&2; exit 126; }
+action="${1:-}"; id="${2:-}"; snap="${3:-}"
+[[ "$id" =~ ^2[0-9][0-9]$ ]] || usage
+need_snap() { [[ "$snap" =~ ^[A-Za-z][A-Za-z0-9_-]{1,39}$ ]] || { echo "snapshot name: a letter, then letters, digits, _ or -" >&2; exit 126; }; }
+
+case "$action" in
+  status)    qm status "$id" --verbose | grep -E '^(status|name|uptime|mem|maxmem|cpus|qmpstatus):' ;;
+  start)     # pve01 has 15 GiB: never alongside the VM 901 restore test (PVE01.md step 7).
+             qm status 901 2>/dev/null | grep -q running && { echo "VM 901 (restore test) is running; refusing" >&2; exit 1; }
+             qm start "$id" ;;
+  shutdown)  qm shutdown "$id" --timeout 180 ;;
+  stop)      qm stop "$id" ;;
+  snapshots) qm listsnapshot "$id" ;;
+  snapshot)  need_snap; qm snapshot "$id" "$snap" ;;
+  rollback)  need_snap; qm rollback "$id" "$snap" ;;
+  delsnapshot) need_snap; qm delsnapshot "$id" "$snap" ;;
+  *)         usage ;;
+esac
