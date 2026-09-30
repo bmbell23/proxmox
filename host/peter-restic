@@ -12,6 +12,11 @@ case "$repo" in
 esac
 export RESTIC_REPOSITORY=/mnt/raid1/restic/$repo RESTIC_PASSWORD_FILE=/root/.restic/$repo.pass
 scratch=/mnt/hdd/restore-test/$repo
+# A future `media` repo lives on /mnt/hdd itself: never full-restore it there. Give it a sample
+# restore (`restic restore latest --include <a few dirs>`) to a disk other than its own.
+
+# If a disk isn't mounted, its path is a bare dir on pve01's 94G root: refuse rather than fill it.
+need_mount() { mountpoint -q "$1" || { echo "$1 is not mounted; refusing" >&2; exit 1; }; }
 
 # Long jobs run as transient units, so they outlive the ssh session; `log` reads them back.
 bg() { systemd-run --quiet --collect --unit="peter-restic-$action-$repo" "$0" "run-$action" "$repo" \
@@ -23,13 +28,20 @@ case "$action" in
   check)      restic check ;;
   backup|restore-test|check-data) bg ;;
   run-backup)
+    need_mount /mnt/raid1
     ls "$src" >/dev/null || exit 1                                     # triggers the automount
     findmnt -no OPTIONS -t cifs "$share" | grep -q '^ro,' || { echo "$share is not mounted read-only; refusing" >&2; exit 1; }
     restic backup "$src" --tag "$repo" ;;
   run-restore-test)
+    # Compares the latest snapshot with the LIVE source: a DIFF can mean "edited since the snapshot",
+    # not only "corrupt". Run it right after a backup. On a DIFF the scratch copy stays, as evidence.
+    need_mount /mnt/raid1; need_mount /mnt/hdd
+    ls "$src" >/dev/null || exit 1
+    restic snapshots --tag "$repo" --latest 1
     rm -rf "$scratch" && mkdir -p "$scratch"
-    restic restore latest --tag "$repo" --target "$scratch" \
-      && diff -rq "$src" "$scratch$src" && echo RESTORE-OK && rm -rf "$scratch" ;;
+    restic restore latest --tag "$repo" --target "$scratch" || exit 1
+    if diff -rq "$src" "$scratch$src"; then echo RESTORE-OK; rm -rf "$scratch"
+    else echo "DIFF: changed since the snapshot above, or corrupt. Scratch kept at $scratch" >&2; exit 1; fi ;;
   run-check-data) restic check --read-data ;;
   log)
     systemctl list-units --all --no-pager --no-legend "peter-restic-*-$repo.service"
