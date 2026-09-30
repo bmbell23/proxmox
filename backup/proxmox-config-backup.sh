@@ -7,7 +7,8 @@
 #   - /etc/hostname, /etc/hosts
 #   - /etc/udev/rules.d/ (automount rules)
 #   - crontab -l       (the running user's crontab; scripts themselves live in the dotfiles repo)
-# To: /mnt/boston/proxmox-config-backups/
+# To: /mnt/boston/proxmox-config-backups/ (override with PROXMOX_CONFIG_BACKUP_DEST; a shadow
+#     run must use its own directory, since pruning only looks inside $DEST)
 # Retains last 30 daily backups, but never prunes the newest successful archive or the
 # newest complete one (a root run, nothing skipped), and prunes nothing until one succeeds.
 # Runs as brandon (brandon is in www-data group for /etc/pve read access).
@@ -17,7 +18,7 @@
 
 set -euo pipefail
 
-DEST="/mnt/boston/proxmox-config-backups"
+DEST="${PROXMOX_CONFIG_BACKUP_DEST:-/mnt/boston/proxmox-config-backups}"
 KEEP=30
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 ARCHIVE="$DEST/proxmox-config-$TIMESTAMP.tar.gz"
