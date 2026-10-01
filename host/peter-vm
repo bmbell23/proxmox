@@ -1,5 +1,6 @@
 #!/bin/bash
-# Peter's window onto his own VMs on pve01 (bmbell23/proxmox#17). Installed root-owned at /usr/local/sbin/peter-vm
+# Peter's window onto his own VMs on pve01 (bmbell23/proxmox#17). Lives at /usr/local/sbin/peter-vm, a symlink into the
+# root-owned /opt/homelab clone (#23: a merge is live after the next pull),
 # and reached only through the dispatcher's `vm` verb, via one sudoers line.
 # VMIDs 200-299 only (k3s01 is 201). No create, destroy, config or disk changes: those stay Brandon's.
 set -uo pipefail

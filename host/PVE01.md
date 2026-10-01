@@ -46,16 +46,18 @@ echo '/dev/pve/fenway /mnt/fenway ext4 defaults,discard 0 2' >> /etc/fstab
 systemctl daemon-reload && mount /mnt/fenway && findmnt /mnt/fenway
 ```
 
-## 3. /opt/homelab, and Peter's restic verb (#7)
+## 3. /opt/homelab, and Peter's verbs (#7, #17, #23)
 The repo is public, so the clone needs no key.
 ```bash
 apt update && apt install -y git restic rsync
 git clone https://github.com/bmbell23/proxmox.git /opt/homelab
-install -m 755 -o root -g root /opt/homelab/host/paul-dispatch /usr/local/sbin/paul-dispatch
-install -m 755 -o root -g root /opt/homelab/host/peter-restic  /usr/local/sbin/peter-restic
-grep -q peter-restic /etc/sudoers.d/peter || echo 'peter ALL=(root) NOPASSWD: /usr/local/sbin/peter-restic' >> /etc/sudoers.d/peter
-visudo -cf /etc/sudoers.d/peter
+bash /opt/homelab/host/pve01-setup.sh tools
 ```
+`tools` symlinks `paul-dispatch`, `peter-restic` and `peter-vm` from `/usr/local/sbin` into `/opt/homelab/host` (#23),
+and gives peter sudo for `peter-restic`, `peter-vm` and `git -C /opt/homelab pull --ff-only`. So a merged change to any of the three
+is live after the next pull: the nightly one in the 03:00 restic DAG, or Peter's `bin/pve01 pull` right after a merge.
+Only changes to `pve01-setup.sh` itself (sudoers, new users, new tools) still need a root re-run.
+It refuses to link unless `/opt/homelab` and `/opt/homelab/host` are `root:root` and not group/world-writable.
 
 ## 4. The `homelab` user: what Dagu logs in as
 No password and no sudo beyond three exact commands. Dagu's key is `~/projects/docker/dagu/dagu_ed25519.pub` on dockerhost.

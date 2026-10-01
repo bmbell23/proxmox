@@ -1,6 +1,6 @@
 #!/bin/bash
-# Paul's only way onto this host (bmbell23/agent-bus#91). Installed at
-# /usr/local/sbin/paul-dispatch and forced for his key in ~paul/.ssh/authorized_keys:
+# Paul's only way onto this host (bmbell23/agent-bus#91). Lives at /usr/local/sbin/paul-dispatch
+# (on pve01 a symlink into /opt/homelab, so a merge is live after the next pull, #23) and is forced for his key in ~paul/.ssh/authorized_keys:
 #   command="/usr/local/sbin/paul-dispatch",restrict ssh-ed25519 AAAA… paul@agent-bus
 # Read-only verbs only. Anything else exits 126; there is no shell.
 set -uo pipefail
@@ -13,7 +13,7 @@ read -r verb arg arg2 arg3 rest <<<"${SSH_ORIGINAL_COMMAND:-help}"
 logger -t paul-dispatch "verb=$verb arg=${arg:-} ${arg2:-} ${arg3:-}"
 
 case "$verb" in
-  help)     echo "verbs: health disks mounts smart <sdX> vms jobs vzdump-logs storage updates timers errors [since] backups restic <action> [repo] vm <action> <200-299> [snap]" ;;
+  help)     echo "verbs: health disks mounts smart <sdX> vms jobs vzdump-logs storage updates timers errors [since] backups restic <action> [repo] vm <action> <200-299> [snap] pull" ;;
   health)   hostname; uptime; pveversion; df -h -x tmpfs -x devtmpfs -x efivarfs; free -h ;;
   disks)    lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL ;;
   mounts)   findmnt -D -t ext4,xfs,vfat,fuseblk,ntfs,ntfs3,cifs; findmnt -rn -t autofs -o TARGET; grep -v '^\s*#' /etc/fstab ;;
@@ -31,5 +31,6 @@ case "$verb" in
   backups)  ls -lt /mnt/boston/proxmox-backups/dump/ | head -12; du -sh /mnt/boston/proxmox-backups /mnt/boston/proxmox-config-backups 2>/dev/null ;;
   restic)   sudo -n /usr/local/sbin/peter-restic "${arg:-snapshots}" "${arg2:-documents}" ;;   # pve01 only (#7)
   vm)       sudo -n /usr/local/sbin/peter-vm "${arg:-}" "${arg2:-}" "${arg3:-}" ;;           # pve01 only, VMIDs 200-299 (#17)
+  pull)     sudo -n /usr/bin/git -C /opt/homelab pull --ff-only ;;                          # pve01 only (#23)
   *)        echo "not allowed: $verb (try: help)" >&2; exit 126 ;;
 esac
