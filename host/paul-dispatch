@@ -13,7 +13,7 @@ read -r verb arg arg2 arg3 rest <<<"${SSH_ORIGINAL_COMMAND:-help}"
 logger -t paul-dispatch "verb=$verb arg=${arg:-} ${arg2:-} ${arg3:-}"
 
 case "$verb" in
-  help)     echo "verbs: health disks mounts smart <sdX> vms jobs vzdump-logs storage updates timers errors [since] backups restic <action> [repo] vm <action> <200-299> [snap] pull" ;;
+  help)     echo "verbs: health disks mounts smart <sdX> vms jobs vzdump-logs storage updates timers errors [since] samba backups restic <action> [repo] vm <action> <200-299> [snap] pull" ;;
   health)   hostname; uptime; pveversion; df -h -x tmpfs -x devtmpfs -x efivarfs; free -h ;;
   disks)    lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL ;;
   mounts)   findmnt -D -t ext4,xfs,vfat,fuseblk,ntfs,ntfs3,cifs; findmnt -rn -t autofs -o TARGET; grep -v '^\s*#' /etc/fstab ;;
@@ -28,6 +28,10 @@ case "$verb" in
   timers)   systemctl list-timers --all --no-pager ;;
   errors)   since="${arg:-24h}"; [[ "$since" =~ ^[0-9]+[hd]$ ]] || { echo "errors [Nh|Nd]" >&2; exit 126; }
             journalctl -p err --since "-${since/d/ days}" --no-pager | tail -60 ;;
+  samba)    testparm -s 2>/dev/null                                                      # #5: shares + root preexec
+            echo "--- share paths"
+            testparm -s 2>/dev/null | awk -F' = ' '/^\[/{s=$0} /^\s*path = /{print s, $2}' | while read -r s p; do
+              mountpoint -q "$p" && echo "$s $p: mounted" || echo "$s $p: NOT a mountpoint (bare dir on /)"; done ;;
   backups)  ls -lt /mnt/boston/proxmox-backups/dump/ | head -12; du -sh /mnt/boston/proxmox-backups /mnt/boston/proxmox-config-backups 2>/dev/null ;;
   restic)   sudo -n /usr/local/sbin/peter-restic "${arg:-snapshots}" "${arg2:-documents}" ;;   # pve01 only (#7)
   vm)       sudo -n /usr/local/sbin/peter-vm "${arg:-}" "${arg2:-}" "${arg3:-}" ;;           # pve01 only, VMIDs 200-299 (#17)
