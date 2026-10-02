@@ -77,13 +77,17 @@ install -d -o homelab -g homelab /mnt/brighton/pictures
 ## 5. restic repo `documents` on beacon
 **The password is the only key to the repo.** Put a copy in your password manager before anything else.
 If pve01's root disk dies and it's gone, beacon holds unreadable data.
+Use the script: `bash /opt/homelab/host/pve01-setup.sh restic_repo`. It never replaces an existing password file
+or re-inits an existing repo (#26). By hand, the same thing with the same guards:
 ```bash
 install -d -m 700 /root/.restic
-openssl rand -base64 32 > /root/.restic/documents.pass && chmod 600 /root/.restic/documents.pass
-cat /root/.restic/documents.pass          # -> password manager, now
+[ -s /root/.restic/documents.pass ] && echo "password file exists: NOT replacing it" \
+  || { (umask 077; openssl rand -base64 32 > /root/.restic/documents.pass); cat /root/.restic/documents.pass; }   # -> password manager, now
 mkdir -p /mnt/beacon/restic
-restic init --repo /mnt/beacon/restic/documents --password-file /root/.restic/documents.pass
+[ -f /mnt/beacon/restic/documents/config ] && echo "repo exists: NOT re-initialising" \
+  || restic init --repo /mnt/beacon/restic/documents --password-file /root/.restic/documents.pass
 ```
+On 2026-09-30 the old unguarded block replaced the password of a live repo, and that copy became unreadable.
 Then Peter runs the first backup, `check` and a restore test through `bin/pve01 restic …`.
 
 ## 6. PBS, with datastore `fenway`
