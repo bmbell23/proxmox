@@ -1,5 +1,6 @@
 #!/bin/bash
-# Peter's restic window on pve01 (bmbell23/proxmox#7). Installed root-owned at /usr/local/sbin/peter-restic
+# Peter's restic window on pve01 (bmbell23/proxmox#7). Lives at /usr/local/sbin/peter-restic, a symlink into the
+# root-owned /opt/homelab clone (#23: a merge is live after the next pull),
 # and reached only through the dispatcher's `restic` verb, via one sudoers line.
 # Repos and sources are fixed here. No init, forget, prune, key or unlock: those stay Brandon's.
 set -uo pipefail

@@ -85,20 +85,30 @@ fenway() {
 }
 
 tools() {
-  say "tools: packages, dispatcher, Peter's restic verb"
+  say "tools: packages, dispatcher, Peter's restic, vm and pull verbs"
   apt_update
   apt-get install -y -qq git restic rsync samba >/dev/null
-  install -m 755 -o root -g root "$REPO/host/paul-dispatch" /usr/local/sbin/paul-dispatch
-  install -m 755 -o root -g root "$REPO/host/peter-restic"  /usr/local/sbin/peter-restic
+  # Symlinks into the clone, not copies (#23): a merged change is live after the next pull, with no root step.
+  # That makes the clone root's code, so refuse to link if anyone but root could write to it.
+  local d
+  for d in "$REPO" "$REPO/host"; do
+    [ "$(stat -c %U:%G "$d")" = root:root ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ] \
+      || { echo "$d must be root:root and not group/world-writable: fix it before linking" >&2; exit 1; }
+  done
+  local t
+  for t in paul-dispatch peter-restic peter-vm; do
+    [ -x "$REPO/host/$t" ] || { echo "$REPO/host/$t missing or not executable" >&2; exit 1; }
+    if [ "$(readlink "/usr/local/sbin/$t")" = "$REPO/host/$t" ]; then skip "/usr/local/sbin/$t -> $REPO/host/$t"
+    else ln -sfn "$REPO/host/$t" "/usr/local/sbin/$t"; echo "   linked /usr/local/sbin/$t -> $REPO/host/$t"; fi
+  done
   local forced; forced=$(grep -o 'command="[^"]*"' /home/peter/.ssh/authorized_keys 2>/dev/null | cut -d'"' -f2 || true)
   [ "$forced" = /usr/local/sbin/paul-dispatch ] && skip "peter's key runs /usr/local/sbin/paul-dispatch" \
     || loud "peter's key forces '${forced:-nothing}', not /usr/local/sbin/paul-dispatch: tell Peter"
-  install -m 755 -o root -g root "$REPO/host/peter-vm"      /usr/local/sbin/peter-vm
-  local w
-  for w in peter-restic peter-vm; do
-    if grep -q "/usr/local/sbin/$w\$" /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line for $w"
+  local line
+  for line in /usr/local/sbin/peter-restic /usr/local/sbin/peter-vm "/usr/bin/git -C $REPO pull --ff-only"; do
+    if grep -qF "NOPASSWD: $line" /etc/sudoers.d/peter 2>/dev/null; then skip "peter's sudoers line for $line"
     else { cat /etc/sudoers.d/peter 2>/dev/null || true
-           echo "peter ALL=(root) NOPASSWD: /usr/local/sbin/$w"; } | sudoers /etc/sudoers.d/peter; fi
+           echo "peter ALL=(root) NOPASSWD: $line"; } | sudoers /etc/sudoers.d/peter; fi
   done
 }
 
