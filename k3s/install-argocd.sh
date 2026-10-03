@@ -40,7 +40,7 @@ notifications:
           method: POST
           path: /posts
           body: |
-            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "🚀 **k3s: %s** is live at [`%s`](https://github.com/bmbell23/proxmox/commit/%s): %s" .app.metadata.name (trunc 7 .app.status.operationState.syncResult.revision) .app.status.operationState.syncResult.revision ((call .repo.GetCommitMetadata .app.status.operationState.syncResult.revision).Message | splitList "\n" | first) | toJson }}}
+            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "@brandon Deployed to k3s `%s` ([%s](https://github.com/bmbell23/proxmox/commit/%s)): %s" .app.metadata.name (trunc 7 .app.status.operationState.syncResult.revision) .app.status.operationState.syncResult.revision ((call .repo.GetCommitMetadata .app.status.operationState.syncResult.revision).Message | splitList "\n" | first) | toJson }}}
     template.app-sync-failed: |
       webhook:
         mattermost:
