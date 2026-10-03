@@ -220,7 +220,8 @@ k3s() {
   qm status 901 2>/dev/null | grep -q running && { echo "VM 901 (restore test) is running; finish it first" >&2; exit 1; }
   local gw dns bridge=vmbr0 key=/root/peter_k3s_ed25519.pub img=/var/lib/vz/import/debian-13-genericcloud-amd64.qcow2
   gw=$(ip -4 route show default | awk '{print $3; exit}')
-  dns=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)
+  # The LAN gateway, not pve01's own resolver: that's Tailscale's 100.100.100.100, which the VMs can't reach (#41).
+  dns=$gw
   ip link show "$bridge" >/dev/null 2>&1 || { echo "no $bridge on pve01" >&2; exit 1; }
   # The key is made on dockerhost, as brandon: cat ~/projects/agent-bus/data/keys/peter_k3s_ed25519.pub
   if [ ! -s "$key" ]; then
@@ -246,7 +247,7 @@ k3s() {
     qm disk resize "$id" scsi0 40G
     # Cloud-init: user peter (NOPASSWD sudo, the Debian cloud default), Peter's key, static IP.
     qm set "$id" --ide2 local-lvm:cloudinit --ciuser peter --sshkeys "$ak" \
-      --ipconfig0 "ip=$ip/24,gw=$gw" --nameserver "$dns"
+      --ipconfig0 "ip=$ip/24,gw=$gw" --nameserver "$dns" --searchdomain home.arpa
     rm -f "$ak"
     qm start "$id"
     echo "   $name (VM $id) starting on $ip"
