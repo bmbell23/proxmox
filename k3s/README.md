@@ -11,3 +11,16 @@ Peter reaches it with `agent-bus/bin/k3s` (sudo inside the VM only). The pve01 h
 | first workload | Brandon picks | #31 |
 
 The k3s version is pinned in `install-server.sh`. Upgrading means changing the pin in a PR, taking a VM snapshot, then re-running the script.
+
+## Deploy notices in #infra (#51)
+ArgoCD's notifications controller posts when an app under `k8s/apps/` changes. Good news comes from Biscuit, bad news from Mongo, the same split as the rest of #infra:
+- Biscuit: "@brandon Deployed to k3s `<app>` (<sha>): <commit subject>" after a sync that comes up Healthy
+- Mongo: "🦖 RAWR." for a failed sync (🔴) or a Degraded app (🟠)
+
+Config lives in `install-argocd.sh`. It needs both bots' Mattermost tokens in `argocd-notifications-secret`. Brandon does this once, on k3s01:
+
+    read -rs B; read -rs M   # paste Biscuit's token, then Mongo's
+    sudo kubectl -n argocd patch secret argocd-notifications-secret --type merge \
+      -p "{\"stringData\":{\"mattermost-token\":\"$B\",\"mongo-token\":\"$M\"}}"; unset B M
+
+Then Peter re-runs `bin/k3s 'sudo bash -s' < k3s/install-argocd.sh`. Without Biscuit's token the script installs with no subscriptions, so nothing posts.
