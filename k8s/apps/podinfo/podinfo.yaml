@@ -1,0 +1,49 @@
+# podinfo: the first app through ArgoCD (#46, #31 step 1). No data; proves git -> cluster -> ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: podinfo}
+  template:
+    metadata:
+      labels: {app: podinfo}
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: {app: podinfo}
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.15.0
+          ports: [{containerPort: 9898}]
+          env: [{name: PODINFO_UI_MESSAGE, value: "Merged on main, synced by ArgoCD"}]
+          readinessProbe: {httpGet: {path: /readyz, port: 9898}}
+          livenessProbe: {httpGet: {path: /healthz, port: 9898}}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo
+spec:
+  selector: {app: podinfo}
+  ports: [{port: 80, targetPort: 9898}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: podinfo
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: podinfo.10.0.0.201.sslip.io
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: podinfo, port: {number: 80}}}}
