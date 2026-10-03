@@ -156,3 +156,13 @@ Asked for by name, not part of the default run. Bianca's side is agent-bus #116 
    **Check that 10.0.0.201-203 are outside your router's DHCP range.**
 The `peter` user inside the VM has NOPASSWD sudo. On pve01 itself Peter only gets `bin/pve01 vm …`
 (`peter-vm`: status/start/shutdown/stop/snapshots, VMIDs 200-299). Creating and destroying VMs stays yours.
+
+## Shutting pve01 down (RAM, hardware) (#58)
+pve01's version of dockerhost's prep-shutdown / verify-boot (docker `docs/SHUTDOWN_RUNBOOK.md`). It stops nothing.
+```bash
+~/projects/Proxmox/host/pve01-shutdown.sh prep     # on dockerhost: SAFE, or what it's waiting on. Snapshot in logs/
+shutdown -h now                                    # on pve01 as root (Brandon): pve-guests stops k3s01-03 gracefully
+~/projects/Proxmox/host/pve01-shutdown.sh verify   # on dockerhost after boot: mounts, VMs, k3s nodes, Argo apps, RAM
+```
+`prep` waits outside 02:15-04:30 (vzdump, restic, pictures copy) and for any restic run or Dagu step talking to pve01.
+It warns if the newest documents snapshot is over 26 h old. Then `bin/pve01 restic backup documents` first.
