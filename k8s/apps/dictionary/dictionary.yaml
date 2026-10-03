@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: dictionary
-          image: ghcr.io/bmbell23/dictionary:latest
+          image: ghcr.io/bmbell23/dictionary:1.0.4
           ports: [{containerPort: 3000}]
           env:
             - {name: TZ, value: America/New_York}
@@ -60,3 +60,41 @@ spec:
       http:
         paths:
           - {path: /, pathType: Prefix, backend: {service: {name: dictionary, port: {number: 80}}}}
+---
+# Weekly OEWN sync (#64): builds /data/dictionary.db. It writes a temp file and renames it, so it can run
+# beside the server. local-path volumes live on one node, so the job follows the dictionary pod there.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dictionary-sync
+spec:
+  schedule: "0 5 * * 0"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector: {matchLabels: {app: dictionary}}
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: sync
+              image: ghcr.io/bmbell23/dictionary:1.0.4
+              command: [node, sync-dictionary.js]
+              env:
+                - {name: TZ, value: America/New_York}
+                - {name: DATA_DIR, value: /data}
+              volumeMounts: [{name: data, mountPath: /data}]
+              resources:
+                requests: {cpu: 10m, memory: 128Mi}
+                limits: {memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim: {claimName: dictionary-data}
