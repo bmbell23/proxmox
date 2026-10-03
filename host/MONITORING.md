@@ -48,9 +48,26 @@ apt-get install -y --no-install-recommends prometheus-node-exporter
 cat > /etc/default/prometheus-node-exporter <<'EOF'
 ARGS="--web.listen-address=10.0.0.159:9100 --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)"
 EOF
+mkdir -p /etc/systemd/system/prometheus-node-exporter.service.d
+cat > /etc/systemd/system/prometheus-node-exporter.service.d/wait-online.conf <<'EOF'
+[Unit]
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=10
+EOF
+systemctl daemon-reload
 systemctl restart prometheus-node-exporter
 systemctl is-active prometheus-node-exporter
+systemctl show prometheus-node-exporter -p After -p Restart -p RestartUSec   # network-online.target, on-failure, 10s
 ```
+
+The drop-in (#62): the exporter binds one IP, and at boot it can start before vmbr0 has it
+(`bind: cannot assign requested address`). Without it, systemd gives up after 5 fast retries and
+`TargetDown` fires on a healthy host. That happened on pve01 on 2026-10-03.
 
 Debian's build hides everything under `/mnt` and `/media` by default (its baked-in exclude is
 `^/(dev|proc|run|sys|mnt|media|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)`). Every data
@@ -106,7 +123,7 @@ If the curls time out, check the PVE firewall with `pve-firewall status`. If it'
 ## Rollback
 ```bash
 apt-get purge -y prometheus-node-exporter prometheus-smartctl-exporter
-rm -rf /etc/systemd/system/smartctl_exporter.service.d && systemctl daemon-reload
+rm -rf /etc/systemd/system/smartctl_exporter.service.d /etc/systemd/system/prometheus-node-exporter.service.d && systemctl daemon-reload
 rm /etc/apt/sources.list.d/debian-backports.sources && apt-get update
 pveum user delete prometheus@pve       # also removes its token
 ```
