@@ -23,6 +23,14 @@ need_mount() { mountpoint -q "$1" || { echo "$1 is not mounted; refusing" >&2; e
 bg() { systemd-run --quiet --collect --unit="peter-restic-$action-$repo" "$0" "run-$action" "$repo" \
          && echo "started peter-restic-$action-$repo; follow with: restic log $repo"; }
 
+# Last success, for Prometheus via node-exporter's textfile collector (#60): a run that never
+# happens (suspended DAG, a failed pull) only shows up as this timestamp getting old.
+textdir=/var/lib/prometheus/node-exporter
+mark_ok() { [ -d "$textdir" ] || return 0
+  printf '# HELP restic_%s_last_success_timestamp_seconds Last successful peter-restic %s.\n# TYPE restic_%s_last_success_timestamp_seconds gauge\nrestic_%s_last_success_timestamp_seconds{repo="%s"} %s\n' \
+    "$1" "$1" "$1" "$1" "$repo" "$(date +%s)" > "$textdir/.peter-restic-$1-$repo.prom.tmp" \
+    && mv "$textdir/.peter-restic-$1-$repo.prom.tmp" "$textdir/peter-restic-$1-$repo.prom"; }
+
 case "$action" in
   snapshots)  restic snapshots ;;
   stats)      restic stats --mode raw-data; restic stats ;;
@@ -33,7 +41,8 @@ case "$action" in
     ls "$src" >/dev/null || exit 1                                     # triggers the automount
     [ -n "$(ls -A "$src")" ] || { echo "$src is empty (boston's disk missing behind the share? #5); refusing" >&2; exit 1; }
     findmnt -no OPTIONS -t cifs "$share" | grep -q '^ro,' || { echo "$share is not mounted read-only; refusing" >&2; exit 1; }
-    restic backup "$src" --tag "$repo" ;;
+    restic backup "$src" --tag "$repo" || exit $?
+    mark_ok backup ;;
   run-restore-test)
     # Compares the latest snapshot with the LIVE source: a DIFF can mean "edited since the snapshot",
     # not only "corrupt". Run it right after a backup. On a DIFF the scratch copy stays, as evidence.
@@ -42,7 +51,7 @@ case "$action" in
     restic snapshots --tag "$repo" --latest 1
     rm -rf "$scratch" && mkdir -p "$scratch"
     restic restore latest --tag "$repo" --target "$scratch" || exit 1
-    if diff -rq "$src" "$scratch$src"; then echo RESTORE-OK; rm -rf "$scratch"
+    if diff -rq "$src" "$scratch$src"; then echo RESTORE-OK; rm -rf "$scratch"; mark_ok restore_test
     else echo "DIFF: changed since the snapshot above, or corrupt. Scratch kept at $scratch" >&2; exit 1; fi ;;
   run-check-data) restic check --read-data ;;
   log)
