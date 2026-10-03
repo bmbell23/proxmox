@@ -157,12 +157,34 @@ Asked for by name, not part of the default run. Bianca's side is agent-bus #116 
 The `peter` user inside the VM has NOPASSWD sudo. On pve01 itself Peter only gets `bin/pve01 vm …`
 (`peter-vm`: status/start/shutdown/stop/snapshots, VMIDs 200-299). Creating and destroying VMs stays yours.
 
+## 9. node-exporter: survive the boot race (#62)
+pve01's `prometheus-node-exporter` (thread 018) listens on `10.0.0.197:9100` only. On 2026-10-03 it started
+before vmbr0 had that IP (`bind: cannot assign requested address`), systemd gave up after 5 fast retries, and
+`TargetDown pve01` fired on a healthy box until a manual restart. On pve01, as root, once:
+```bash
+mkdir -p /etc/systemd/system/prometheus-node-exporter.service.d
+cat > /etc/systemd/system/prometheus-node-exporter.service.d/wait-online.conf <<'EOF'
+[Unit]
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=10
+EOF
+systemctl daemon-reload && systemctl show prometheus-node-exporter -p After -p Restart -p RestartUSec
+```
+`show` should list `network-online.target`, `Restart=on-failure` and `RestartUSec=10s`. It doesn't restart the
+service. Undo: delete the directory, then `daemon-reload`. The Proxmox host gets the same drop-in (`MONITORING.md` §1).
+`pve01-shutdown.sh verify` checks `:9100` on pve01 and k3s01-03, so a dead exporter shows up as a PROBLEM line.
+
 ## Shutting pve01 down (RAM, hardware) (#58)
 pve01's version of dockerhost's prep-shutdown / verify-boot (docker `docs/SHUTDOWN_RUNBOOK.md`). It stops nothing.
 ```bash
 ~/projects/Proxmox/host/pve01-shutdown.sh prep     # on dockerhost: SAFE, or what it's waiting on. Snapshot in logs/
 shutdown -h now                                    # on pve01 as root (Brandon): pve-guests stops k3s01-03 gracefully
-~/projects/Proxmox/host/pve01-shutdown.sh verify   # on dockerhost after boot: mounts, VMs, k3s nodes, Argo apps, RAM
+~/projects/Proxmox/host/pve01-shutdown.sh verify   # on dockerhost after boot: mounts, VMs, :9100, k3s nodes, Argo apps, RAM
 ```
 `prep` waits outside 02:15-04:30 (vzdump, restic, pictures copy) and for any restic run or Dagu step talking to pve01.
 It warns if the newest documents snapshot is over 26 h old. Then `bin/pve01 restic backup documents` first.

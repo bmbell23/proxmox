@@ -110,6 +110,10 @@ verify() {
         sleep 20
     done
     for v in $vm_bad; do problems+=("VM $v is not running (was before shutdown)"); done
+    # 5. Metrics: an exporter that died at boot leaves TargetDown firing on a healthy box (2026-10-03, #62).
+    for ip in 10.0.0.197 10.0.0.201 10.0.0.202 10.0.0.203; do
+        curl -s -m5 "http://$ip:9100/metrics" | grep -q '^node_load1' || problems+=("node-exporter on $ip:9100 doesn't answer")
+    done
     [ -n "$nodes" ] && problems+=("k3s nodes not Ready: $(echo "$nodes" | tr '\n' ' ')")
     [ -n "$apps" ]  && problems+=("Argo apps not Synced/Healthy: $(echo "$apps" | tr '\n' ' ')")
     local pods; pods=$(k3s 'sudo kubectl get pods -A --no-headers' | awk '$4!="Running" && $4!="Completed"{print $1"/"$2}' \
