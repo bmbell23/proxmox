@@ -5,7 +5,7 @@
 # Pinned chart; change it here, in a PR. Safe to re-run. Needs helm (k3s/install-rancher.sh installs it).
 set -euo pipefail
 
-# #51: what Biscuit says. Only on a real sync (oncePer the synced commit), so a merge that touches
+# #51: good news is Biscuit's, bad news is Mongo's (like every alert in #infra). Only on a real sync (oncePer the synced commit), so a merge that touches
 # one app doesn't re-announce the others. Without a channel id, no subscriptions: nothing posts.
 notification_values() {
   cat <<'YAML'
@@ -16,6 +16,13 @@ notifications:
       headers:
       - name: Authorization
         value: Bearer $mattermost-token
+      - name: Content-Type
+        value: application/json
+    service.webhook.mongo: |
+      url: __MM_URL__/api/v4
+      headers:
+      - name: Authorization
+        value: Bearer $mongo-token
       - name: Content-Type
         value: application/json
   triggers:
@@ -43,18 +50,18 @@ notifications:
             {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "@brandon Deployed to k3s `%s` ([%s](https://github.com/bmbell23/proxmox/commit/%s)): %s" .app.metadata.name (trunc 7 .app.status.operationState.syncResult.revision) .app.status.operationState.syncResult.revision ((call .repo.GetCommitMetadata .app.status.operationState.syncResult.revision).Message | splitList "\n" | first) | toJson }}}
     template.app-sync-failed: |
       webhook:
-        mattermost:
+        mongo:
           method: POST
           path: /posts
           body: |
-            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "❌ **k3s: %s** sync failed at `%s`: %s ([ArgoCD](%s/applications/%s))" .app.metadata.name (trunc 7 .app.status.operationState.syncResult.revision) .app.status.operationState.message .context.argocdUrl .app.metadata.name | toJson }}}
+            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "🦖 **RAWR.** Mongo smells trouble:\n🔴 **k3s: %s** · sync failed · `%s` · [ArgoCD](%s/applications/%s)\n> %s" .app.metadata.name (trunc 7 .app.status.operationState.syncResult.revision) .context.argocdUrl .app.metadata.name .app.status.operationState.message | toJson }}}
     template.app-health-degraded: |
       webhook:
-        mattermost:
+        mongo:
           method: POST
           path: /posts
           body: |
-            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "⚠️ **k3s: %s** is Degraded ([ArgoCD](%s/applications/%s))" .app.metadata.name .context.argocdUrl .app.metadata.name | toJson }}}
+            {"channel_id": "{{.context.mattermostChannel}}", "message": {{ printf "🦖 **RAWR.** Mongo smells trouble:\n🟠 **k3s: %s** · Degraded · [ArgoCD](%s/applications/%s)" .app.metadata.name .context.argocdUrl .app.metadata.name | toJson }}}
 YAML
   [ -n "$MM_CHANNEL_ID" ] || return 0
   cat <<YAML
@@ -62,7 +69,9 @@ YAML
     mattermostChannel: $MM_CHANNEL_ID
   subscriptions:
     - recipients: [mattermost]
-      triggers: [on-deployed, on-sync-failed, on-health-degraded]
+      triggers: [on-deployed]
+    - recipients: [mongo]
+      triggers: [on-sync-failed, on-health-degraded]
 YAML
 }
 ARGOCD_CHART_VERSION=10.9.6
@@ -80,7 +89,7 @@ command -v helm >/dev/null || { echo "no helm: run k3s/install-rancher.sh first"
 helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
 helm repo update >/dev/null
 
-# #51: Biscuit's bot token lives in argocd-notifications-secret (Brandon puts it there, k3s/README.md).
+# #51: Biscuit's and Mongo's bot tokens live in argocd-notifications-secret (Brandon puts it there, k3s/README.md).
 # The chart owns that secret with no items, so a re-run leaves his key alone. The #infra channel id
 # isn't secret: look it up with the token and hand it to the templates as context.
 MM_CHANNEL_ID=
