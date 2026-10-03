@@ -45,11 +45,16 @@ If the error is something else, stop and paste it to Paul.
 timers to the host.
 ```bash
 apt-get install -y --no-install-recommends prometheus-node-exporter
-sed -i 's|^ARGS=.*|ARGS="--web.listen-address=10.0.0.159:9100"|' /etc/default/prometheus-node-exporter
-grep ^ARGS /etc/default/prometheus-node-exporter
+cat > /etc/default/prometheus-node-exporter <<'EOF'
+ARGS="--web.listen-address=10.0.0.159:9100 --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)"
+EOF
 systemctl restart prometheus-node-exporter
 systemctl is-active prometheus-node-exporter
 ```
+
+Debian's build hides everything under `/mnt` and `/media` by default (its baked-in exclude is
+`^/(dev|proc|run|sys|mnt|media|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)`). Every data
+disk here lives under `/mnt`, so the override above drops those two folders and keeps the rest.
 
 ## 2. smartctl_exporter (trixie-backports, 0.14.0)
 It isn't in trixie main, so add backports and pin the install to it. Backports packages are only
@@ -64,11 +69,16 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 apt-get update
 apt-get install -y -t trixie-backports prometheus-smartctl-exporter
-sed -i 's|^ARGS=.*|ARGS="--web.listen-address=10.0.0.159:9633"|' /etc/default/prometheus-smartctl-exporter
-grep ^ARGS /etc/default/prometheus-smartctl-exporter    # if there's no ARGS line, add that one
-systemctl restart prometheus-smartctl-exporter
-systemctl is-active prometheus-smartctl-exporter
+mkdir -p /etc/systemd/system/smartctl_exporter.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/smartctl_exporter --web.listen-address=10.0.0.159:9633\n' \
+  > /etc/systemd/system/smartctl_exporter.service.d/listen.conf
+systemctl daemon-reload
+systemctl restart smartctl_exporter
+systemctl is-active smartctl_exporter
+ss -ltnp | grep 9633      # 10.0.0.159:9633, not *:9633
 ```
+The unit is `smartctl_exporter.service`, not `prometheus-smartctl-exporter`, and it reads no
+`/etc/default` file (`ExecStart=/usr/bin/smartctl_exporter`, no `EnvironmentFile`), so the address goes in a drop-in.
 
 ## 3. Read-only API user for pve-exporter
 ```bash
@@ -84,9 +94,10 @@ gets the user's rights, which are PVEAuditor (look, don't touch).
 ## 4. Check (Paul can run these from dockerhost)
 ```bash
 curl -s 10.0.0.159:9100/metrics | grep -m1 '^node_load1'
-curl -s 10.0.0.159:9633/metrics | grep -c '^smartctl_device_smart_status'   # one per drive: expect 6 (nvme0n1, sda-sde per `bin/proxmox disks`)
+curl -s 10.0.0.159:9100/metrics | grep -c '^node_filesystem_size_bytes.*mountpoint="/mnt/'   # expect 4: allston, boston, external, ssd250
+curl -s 10.0.0.159:9633/metrics | grep -c '^smartctl_device_smart_status'   # one per drive: expect 5: nvme0, sda, sdb, sdd, sde. sdc died in May (`INQUIRY failed`) and doesn't show
 ```
-If the count is 0, or the two USB Passports (sdd, sde) are missing, read `journalctl -u prometheus-smartctl-exporter -n 30`: it needs to be able to
+If the count is 0, or the two USB Passports (sdd, sde) are missing, read `journalctl -u smartctl_exporter -n 30`: it needs to be able to
 open `/dev/sd*` (Debian's unit should handle that, but it isn't verified here).
 
 If the curls time out, check the PVE firewall with `pve-firewall status`. If it's enabled, allow 9100 and
@@ -95,6 +106,7 @@ If the curls time out, check the PVE firewall with `pve-firewall status`. If it'
 ## Rollback
 ```bash
 apt-get purge -y prometheus-node-exporter prometheus-smartctl-exporter
+rm -rf /etc/systemd/system/smartctl_exporter.service.d && systemctl daemon-reload
 rm /etc/apt/sources.list.d/debian-backports.sources && apt-get update
 pveum user delete prometheus@pve       # also removes its token
 ```
