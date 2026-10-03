@@ -26,5 +26,8 @@ Config lives in `install-argocd.sh`. It needs both bots' Mattermost tokens in `a
 
 Then Peter re-runs `bin/k3s 'sudo bash -s' < k3s/install-argocd.sh`. Without Biscuit's token the script installs with no subscriptions, so nothing posts.
 
+## Backups (#53)
+Backups and the keys that must not be lost: [BACKUP.md](BACKUP.md).
+
 ## Readable docs in Trilium (#54)
 The tree **pve01 → k3s cluster — as built** (`vNqeCu31o1M4`) explains all of this for humans: nodes, access, deploying, PVCs, keys and backups, and what to do when things break. This repo stays the source of truth: when a fact here changes, update the matching Trilium page with `agent-bus/bin/trilium update <noteId> --file page.md`.
