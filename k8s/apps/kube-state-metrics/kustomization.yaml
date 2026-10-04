@@ -1,0 +1,20 @@
+# kube-state-metrics for Mongo's k3s alerts (#66): Daisy's K3sNodeNotReady / K3sNodeMetricsMissing.
+# The five resource files are upstream examples/standard at v2.20.0, unedited; local changes live here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-state-metrics
+
+resources:
+- cluster-role.yaml
+- cluster-role-binding.yaml
+- service-account.yaml
+- deployment.yaml
+- service.yaml
+- nodeport.yaml
+
+patches:
+- target: {kind: Deployment, name: kube-state-metrics}
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/resources
+      value: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 256Mi}}
