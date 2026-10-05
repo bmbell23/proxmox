@@ -1,8 +1,8 @@
 # Dictionary: the first real app on k3s (#31). The dockerhost copy (:8098) keeps running until Brandon approves this one.
 # Image is built and published by bmbell23/Dictionary (Daphne). One replica: glossary.db is SQLite on a
 # local-path volume, so it lives on one node and two writers would fight over it.
-# Images are pinned by digest: the publish Action re-pushes the version.txt tag on every main push, so a tag
-# can move (1.0.4 did, 2026-10-04). This digest is Dictionary 4d42b4a, PR #11 (health answers from cache).
+# Images are pinned by tag+digest. Before Dictionary PR #13 the publish Action re-pushed the version.txt tag, so a tag
+# could move (1.0.4 did, 2026-10-04); tags are immutable since 1.0.6, and the digest keeps the pin honest either way.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
         - name: dictionary
-          image: ghcr.io/bmbell23/dictionary@sha256:ab6a3b9e9350ce3a32816578d33c868d135b9f3162823943d04a39f99cb6d4d3
+          image: ghcr.io/bmbell23/dictionary:1.0.7@sha256:1f74eecc85ba761c03290113f272019a3362a81071e154182c33a61378b23d1c
           ports: [{containerPort: 3000}]
           env:
             - {name: TZ, value: America/New_York}
@@ -88,7 +88,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: sync
-              image: ghcr.io/bmbell23/dictionary@sha256:ab6a3b9e9350ce3a32816578d33c868d135b9f3162823943d04a39f99cb6d4d3
+              image: ghcr.io/bmbell23/dictionary:1.0.7@sha256:1f74eecc85ba761c03290113f272019a3362a81071e154182c33a61378b23d1c
               command: [node, sync-dictionary.js]
               env:
                 - {name: TZ, value: America/New_York}
