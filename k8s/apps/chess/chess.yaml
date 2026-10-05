@@ -1,0 +1,113 @@
+# Chess on k3s (#78, thread 024). Image by Callie (Chess PR #34), pinned by tag+digest.
+# chess.db is SQLite with one writer: 1 replica, Recreate. Runs as uid 1000 (USER chess), alembic runs at start.
+# The seed init container holds the pod until Peter copies a sqlite3 .backup in and touches .seeded,
+# so the app never starts (and migrates) an empty DB.
+# Secret chess-secrets (key CONTACT_EMAIL) is Brandon's: kubectl -n chess create secret generic ...
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chess-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chess-env
+data:
+  CHESSCOM_USERNAME: dungeon_crawler_carl
+  DATABASE_URL: sqlite:////app/data/chess.db
+  ENABLE_SCHEDULERS: "false"
+  HOST: 0.0.0.0
+  PORT: "8011"
+  TZ: America/Denver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chess
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: chess}
+  template:
+    metadata:
+      labels: {app: chess}
+    spec:
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      initContainers:
+        - name: wait-for-seed
+          image: ghcr.io/bmbell23/chess:0.1.27@sha256:d5da306f6b477c79642e8d296a48a5c24f4a5ac5ec149dd4ee831ce91cabbaac
+          command: [sh, -c, 'until [ -f /app/data/.seeded ]; do echo "waiting for /app/data/.seeded"; sleep 10; done']
+          volumeMounts: [{name: data, mountPath: /app/data}]
+      containers:
+        - name: chess
+          image: ghcr.io/bmbell23/chess:0.1.27@sha256:d5da306f6b477c79642e8d296a48a5c24f4a5ac5ec149dd4ee831ce91cabbaac
+          ports: [{containerPort: 8011}]
+          envFrom: [{configMapRef: {name: chess-env}}]
+          env:
+            - name: CONTACT_EMAIL
+              valueFrom: {secretKeyRef: {name: chess-secrets, key: CONTACT_EMAIL, optional: true}}
+          volumeMounts: [{name: data, mountPath: /app/data}]
+          startupProbe: {httpGet: {path: /health, port: 8011}, periodSeconds: 5, failureThreshold: 24}
+          readinessProbe: {httpGet: {path: /health, port: 8011}, timeoutSeconds: 3}
+          livenessProbe: {httpGet: {path: /health, port: 8011}, periodSeconds: 30, timeoutSeconds: 5}
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: chess-data}
+---
+# Nightly chess.com sync (Dagu chess-nightly-sync on dockerhost today, 03:00). HTTP to the Service only,
+# so no PVC and no node pinning. 03:30 until cutover, so the two copies never hit chess.com at once.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chess-nightly-sync
+spec:
+  schedule: "30 3 * * *"
+  timeZone: America/Denver
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 14400
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext: {runAsUser: 1000, runAsGroup: 1000}
+          containers:
+            - name: nightly-sync
+              image: ghcr.io/bmbell23/chess:0.1.27@sha256:d5da306f6b477c79642e8d296a48a5c24f4a5ac5ec149dd4ee831ce91cabbaac
+              command: [/app/scripts/nightly-sync.sh]
+              env: [{name: CHESS_URL, value: http://chess}]
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chess
+spec:
+  selector: {app: chess}
+  ports: [{port: 80, targetPort: 8011}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chess
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: chess.10.0.0.201.sslip.io
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: chess, port: {number: 80}}}}
