@@ -1,0 +1,145 @@
+# PokeVault on k3s (#76, thread 024). Image by Poppy (PokeVault PR #6), pinned by tag+digest.
+# pokevault.db is SQLite in WAL mode, written by web, worker and the variant updater: WAL needs one node and one
+# local filesystem, so web + worker share a pod and the updater CronJob follows that pod. Never SMB/NFS.
+# Secret pokevault-secrets (key POKEMONTCG_API_KEY) is Brandon's: kubectl -n pokevault create secret generic ...
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pokevault-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 2Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pokevault-env
+data:
+  DATABASE_URL: sqlite:////app/data/pokevault.db
+  DATA_DIR: /app/data
+  CACHE_DIR: /app/data/cache
+  IMAGES_DIR: /app/data/images
+  PRICE_UPDATE_HOUR: "2"
+  PRICE_UPDATE_MINUTE: "0"
+  PRICING_PROVIDER: tcgdex
+  HOST: 0.0.0.0
+  PORT: "8000"
+  RELOAD: "false"
+  TZ: America/Denver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pokevault
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: pokevault}
+  template:
+    metadata:
+      labels: {app: pokevault}
+    spec:
+      initContainers:
+        - name: migrate
+          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          command: [alembic, upgrade, head]
+          envFrom: [{configMapRef: {name: pokevault-env}}]
+          volumeMounts: [{name: data, mountPath: /app/data}]
+      containers:
+        - name: web
+          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          ports: [{containerPort: 8000}]
+          envFrom: [{configMapRef: {name: pokevault-env}}]
+          env:
+            - {name: ENABLE_SCHEDULER, value: "false"}
+            - name: POKEMONTCG_API_KEY
+              valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+            - name: POKEMON_TCG_API_KEY
+              valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+          volumeMounts: [{name: data, mountPath: /app/data}]
+          readinessProbe: {httpGet: {path: /health, port: 8000}, timeoutSeconds: 3}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 30, timeoutSeconds: 5}
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {memory: 512Mi}
+        - name: worker
+          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          command: [python, -m, pokevault.worker.scheduler]
+          envFrom: [{configMapRef: {name: pokevault-env}}]
+          env:
+            - {name: ENABLE_SCHEDULER, value: "true"}
+            - name: POKEMONTCG_API_KEY
+              valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+            - name: POKEMON_TCG_API_KEY
+              valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+          volumeMounts: [{name: data, mountPath: /app/data}]
+          resources:
+            requests: {cpu: 10m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: pokevault-data}
+---
+# Daily card-variant update (was a restart loop on dockerhost). Runs on the pokevault pod's node: same SQLite file.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pokevault-variant-updater
+spec:
+  schedule: "30 4 * * *"
+  timeZone: America/Denver
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        spec:
+          restartPolicy: Never
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector: {matchLabels: {app: pokevault}}
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: variant-updater
+              image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+              command: [python, -u, /app/scripts/update_card_variants.py]
+              envFrom: [{configMapRef: {name: pokevault-env}}]
+              env:
+                - name: POKEMONTCG_API_KEY
+                  valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+                - name: POKEMON_TCG_API_KEY
+                  valueFrom: {secretKeyRef: {name: pokevault-secrets, key: POKEMONTCG_API_KEY, optional: true}}
+              volumeMounts: [{name: data, mountPath: /app/data}]
+              resources:
+                requests: {cpu: 10m, memory: 128Mi}
+                limits: {memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim: {claimName: pokevault-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pokevault
+spec:
+  selector: {app: pokevault}
+  ports: [{port: 80, targetPort: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pokevault
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: pokevault.10.0.0.201.sslip.io
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: pokevault, port: {number: 80}}}}
