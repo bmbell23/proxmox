@@ -63,14 +63,14 @@ spec:
         - name: data
           persistentVolumeClaim: {claimName: chess-data}
 ---
-# Nightly chess.com sync (Dagu chess-nightly-sync on dockerhost today, 03:00). HTTP to the Service only,
-# so no PVC and no node pinning. 03:30 until cutover, so the two copies never hit chess.com at once.
+# Nightly chess.com sync (was Dagu chess-nightly-sync on dockerhost, 03:00, until the 2026-10-06 cutover, #80).
+# HTTP to the Service only, so no PVC and no node pinning.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: chess-nightly-sync
 spec:
-  schedule: "30 3 * * *"
+  schedule: "0 3 * * *"
   timeZone: America/Denver
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
