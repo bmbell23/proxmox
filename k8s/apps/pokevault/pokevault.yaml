@@ -44,13 +44,13 @@ spec:
     spec:
       initContainers:
         - name: migrate
-          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          image: ghcr.io/bmbell23/pokevault:0.1.23@sha256:18d081e28ec929e73b0fd8c94e3e79bf07a1f1bf80bdd58a12416e1c3fd5146c
           command: [alembic, upgrade, head]
           envFrom: [{configMapRef: {name: pokevault-env}}]
           volumeMounts: [{name: data, mountPath: /app/data}]
       containers:
         - name: web
-          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          image: ghcr.io/bmbell23/pokevault:0.1.23@sha256:18d081e28ec929e73b0fd8c94e3e79bf07a1f1bf80bdd58a12416e1c3fd5146c
           ports: [{containerPort: 8000}]
           envFrom: [{configMapRef: {name: pokevault-env}}]
           env:
@@ -66,7 +66,7 @@ spec:
             requests: {cpu: 20m, memory: 128Mi}
             limits: {memory: 512Mi}
         - name: worker
-          image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+          image: ghcr.io/bmbell23/pokevault:0.1.23@sha256:18d081e28ec929e73b0fd8c94e3e79bf07a1f1bf80bdd58a12416e1c3fd5146c
           command: [python, -m, pokevault.worker.scheduler]
           envFrom: [{configMapRef: {name: pokevault-env}}]
           env:
@@ -108,7 +108,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: variant-updater
-              image: ghcr.io/bmbell23/pokevault:0.1.22@sha256:defddbd5dcd38aa8a8487a0cfc5a3ddc98a8a554dd00dc042d2b950c1fad330a
+              image: ghcr.io/bmbell23/pokevault:0.1.23@sha256:18d081e28ec929e73b0fd8c94e3e79bf07a1f1bf80bdd58a12416e1c3fd5146c
               command: [python, -u, /app/scripts/update_card_variants.py]
               envFrom: [{configMapRef: {name: pokevault-env}}]
               env:
