@@ -1,0 +1,192 @@
+# FunForge on k3s (#85, thread 024). Image by Felicia (FunForge #35, PR #36), pinned by tag+digest.
+# fun_forge.db is SQLite with one writer: 1 replica, Recreate. Runs as uid 1000 (USER funforge).
+# The seed init container holds the pod until Peter copies a sqlite3 .backup (plus covers, faces, APKs) in
+# and touches .seeded, so the app never starts (and scans into) an empty DB.
+# kid-media comes from boston over the LAN (#74): Music read-write as k3s-rw (parent-mode delete unlinks
+# files; boston is the only copy, so a delete is final), Podcasts read-only as k3s-ro.
+# Secrets are Brandon's: funforge-secrets (PARENT_PIN, optional: unset = 1234 as on dockerhost today) and
+# funforge-immich (IMMICH_API_KEY, for the weekly faces sync).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: funforge-music
+spec:
+  capacity: {storage: 1Ti}
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions: [vers=3.1.1, uid=1000, gid=1000, dir_mode=0755, file_mode=0644]
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: boston/media/kid-media/Music
+    volumeAttributes: {source: //10.0.0.159/boston/media/kid-media/Music}
+    nodeStageSecretRef: {name: smb-boston-rw, namespace: kube-system}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: funforge-podcasts
+spec:
+  capacity: {storage: 1Ti}
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions: [vers=3.1.1, uid=1000, gid=1000, dir_mode=0555, file_mode=0444]
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: boston/media/kid-media/Podcasts
+    readOnly: true
+    volumeAttributes: {source: //10.0.0.159/boston/media/kid-media/Podcasts}
+    nodeStageSecretRef: {name: smb-boston-ro, namespace: kube-system}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: funforge-music
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: funforge-music
+  resources:
+    requests: {storage: 1Ti}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: funforge-podcasts
+spec:
+  accessModes: [ReadOnlyMany]
+  storageClassName: ""
+  volumeName: funforge-podcasts
+  resources:
+    requests: {storage: 1Ti}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: funforge-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: funforge-env
+data:
+  DATABASE_URL: sqlite:////app/data/fun_forge.db
+  DATA_DIR: /app/data
+  MUSIC_DIR: /music
+  PODCAST_DIR: /podcasts
+  HOST: 0.0.0.0
+  PORT: "8006"
+  TZ: America/Denver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: funforge
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: funforge}
+  template:
+    metadata:
+      labels: {app: funforge}
+    spec:
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      initContainers:
+        - name: wait-for-seed
+          image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+          command: [sh, -c, 'until [ -f /app/data/.seeded ]; do echo "waiting for /app/data/.seeded"; sleep 10; done']
+          volumeMounts: [{name: data, mountPath: /app/data}]
+      containers:
+        - name: funforge
+          image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+          ports: [{containerPort: 8006}]
+          envFrom: [{configMapRef: {name: funforge-env}}]
+          env:
+            - name: PARENT_PIN
+              valueFrom: {secretKeyRef: {name: funforge-secrets, key: PARENT_PIN, optional: true}}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: music, mountPath: /music}
+            - {name: podcasts, mountPath: /podcasts, readOnly: true}
+          startupProbe: {httpGet: {path: /health, port: 8006}, periodSeconds: 5, failureThreshold: 36}
+          readinessProbe: {httpGet: {path: /health, port: 8006}, timeoutSeconds: 3}
+          livenessProbe: {httpGet: {path: /health, port: 8006}, periodSeconds: 30, timeoutSeconds: 5}
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: funforge-data}
+        - name: music
+          persistentVolumeClaim: {claimName: funforge-music}
+        - name: podcasts
+          persistentVolumeClaim: {claimName: funforge-podcasts, readOnly: true}
+---
+# Family photos from Immich (was scripts/sync_immich_faces.py run by hand on dockerhost). Writes data/faces and
+# data/family_photos.json on the PVC, so it runs on the funforge pod's node. Nothing it fetches shows in the
+# game until a grown-up approves it in the parent screen. Immich answers k3s on the LAN (10.0.0.160:2283, 200).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: funforge-immich-faces
+spec:
+  schedule: "30 5 * * 0"
+  timeZone: America/Denver
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext: {runAsUser: 1000, runAsGroup: 1000}
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector: {matchLabels: {app: funforge}}
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: immich-faces
+              image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+              command: [python3, /app/scripts/sync_immich_faces.py]
+              env:
+                - {name: IMMICH_URL, value: "http://10.0.0.160:2283"}
+                - {name: IMMICH_PEOPLE, value: "Weston,Rowan"}
+                - {name: IMMICH_PHOTOS_PER_PERSON, value: "40"}
+                - name: IMMICH_API_KEY
+                  valueFrom: {secretKeyRef: {name: funforge-immich, key: IMMICH_API_KEY}}
+              volumeMounts: [{name: data, mountPath: /app/data}]
+              resources:
+                requests: {cpu: 10m, memory: 64Mi}
+                limits: {memory: 256Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim: {claimName: funforge-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: funforge
+spec:
+  selector: {app: funforge}
+  ports: [{port: 80, targetPort: 8006}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: funforge
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: funforge.10.0.0.201.sslip.io
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: funforge, port: {number: 80}}}}
