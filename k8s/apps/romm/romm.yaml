@@ -1,0 +1,177 @@
+# RomM on k3s (#92, thread 024). Third-party images, pinned by tag+digest (5.4.1 = what dockerhost runs, 2026-10-25).
+# Data: MariaDB in a StatefulSet (moved with mysqldump, never a file copy); resources, assets (saves/states) and
+# config on one local-path PVC; the library on boston over SMB as k3s-rw (#74). Valkey (/redis-data) is a cache.
+# The romm pod waits for /seed/.seeded (Peter touches it after copying resources/assets/config and the dump).
+# Secrets are Brandon's, rotated at the move (docker#144):
+#   romm-db:      MARIADB_ROOT_PASSWORD, MARIADB_PASSWORD
+#   romm-secrets: ROMM_AUTH_SECRET_KEY, IGDB_CLIENT_SECRET
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: romm-library
+spec:
+  capacity: {storage: 1Ti}
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions: [vers=3.1.1, dir_mode=0775, file_mode=0664]
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: boston/media/games
+    volumeAttributes: {source: //10.0.0.159/boston/media/games}
+    nodeStageSecretRef: {name: smb-boston-rw, namespace: kube-system}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: romm-library
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: romm-library
+  resources:
+    requests: {storage: 1Ti}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: romm-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 10Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: romm-db
+spec:
+  clusterIP: None
+  selector: {app: romm-db}
+  ports: [{port: 3306}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: romm-db
+spec:
+  serviceName: romm-db
+  replicas: 1
+  selector:
+    matchLabels: {app: romm-db}
+  template:
+    metadata:
+      labels: {app: romm-db}
+    spec:
+      containers:
+        - name: mariadb
+          # 12.2 only: a major moves the datadir one way (docker#37)
+          image: mariadb:12.2@sha256:6a4c4bbf0447c2247801309513fcc0dd17c3f35390368139ce419387fdd1144d
+          ports: [{containerPort: 3306}]
+          env:
+            - {name: MARIADB_DATABASE, value: romm}
+            - {name: MARIADB_USER, value: romm-user}
+            - name: MARIADB_PASSWORD
+              valueFrom: {secretKeyRef: {name: romm-db, key: MARIADB_PASSWORD}}
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: romm-db, key: MARIADB_ROOT_PASSWORD}}
+          volumeMounts: [{name: db, mountPath: /var/lib/mysql}]
+          readinessProbe:
+            exec: {command: [healthcheck.sh, --connect, --innodb_initialized]}
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: [healthcheck.sh, --connect]}
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+  volumeClaimTemplates:
+    - metadata:
+        name: db
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests: {storage: 2Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: romm-env
+data:
+  DB_HOST: romm-db
+  DB_NAME: romm
+  DB_USER: romm-user
+  IGDB_CLIENT_ID: sja8u8b6zvobg2bju98jtgvfwli25c
+  TZ: America/Denver
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: romm
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: romm}
+  template:
+    metadata:
+      labels: {app: romm}
+    spec:
+      initContainers:
+        - name: wait-for-seed
+          image: rommapp/romm:5.4.1@sha256:8677fb7b81b1d3db20b849e989a1dadc2a11159e51eb34a2acdcb01102274edf
+          command: [sh, -c, 'until [ -f /seed/.seeded ]; do echo "waiting for /seed/.seeded"; sleep 10; done']
+          volumeMounts: [{name: data, mountPath: /seed}]
+      containers:
+        - name: romm
+          image: rommapp/romm:5.4.1@sha256:8677fb7b81b1d3db20b849e989a1dadc2a11159e51eb34a2acdcb01102274edf
+          ports: [{containerPort: 8080}]
+          envFrom: [{configMapRef: {name: romm-env}}]
+          env:
+            - name: DB_PASSWD
+              valueFrom: {secretKeyRef: {name: romm-db, key: MARIADB_PASSWORD}}
+            - name: ROMM_AUTH_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: romm-secrets, key: ROMM_AUTH_SECRET_KEY}}
+            - name: IGDB_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: romm-secrets, key: IGDB_CLIENT_SECRET}}
+          volumeMounts:
+            - {name: library, mountPath: /romm/library}
+            - {name: data, mountPath: /romm/resources, subPath: resources}
+            - {name: data, mountPath: /romm/assets, subPath: assets}
+            - {name: data, mountPath: /romm/config, subPath: config}
+            - {name: redis, mountPath: /redis-data}
+          startupProbe: {httpGet: {path: /api/heartbeat, port: 8080}, periodSeconds: 5, failureThreshold: 60}
+          readinessProbe: {httpGet: {path: /api/heartbeat, port: 8080}, timeoutSeconds: 5}
+          livenessProbe: {httpGet: {path: /api/heartbeat, port: 8080}, periodSeconds: 30, timeoutSeconds: 10}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 2Gi}
+      volumes:
+        - name: library
+          persistentVolumeClaim: {claimName: romm-library}
+        - name: data
+          persistentVolumeClaim: {claimName: romm-data}
+        - name: redis
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: romm
+spec:
+  selector: {app: romm}
+  ports: [{port: 80, targetPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: romm
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: romm.10.0.0.201.sslip.io
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: romm, port: {number: 80}}}}
