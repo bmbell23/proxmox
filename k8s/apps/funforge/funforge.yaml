@@ -98,12 +98,12 @@ spec:
       securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
       initContainers:
         - name: wait-for-seed
-          image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+          image: ghcr.io/bmbell23/funforge:1.0.20@sha256:b1daeb02521be100ec0d2f9569a8cd35efbee395265e667d89805bf228c1a5f9
           command: [sh, -c, 'until [ -f /app/data/.seeded ]; do echo "waiting for /app/data/.seeded"; sleep 10; done']
           volumeMounts: [{name: data, mountPath: /app/data}]
       containers:
         - name: funforge
-          image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+          image: ghcr.io/bmbell23/funforge:1.0.20@sha256:b1daeb02521be100ec0d2f9569a8cd35efbee395265e667d89805bf228c1a5f9
           ports: [{containerPort: 8006}]
           envFrom: [{configMapRef: {name: funforge-env}}]
           env:
@@ -155,7 +155,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: immich-faces
-              image: ghcr.io/bmbell23/funforge:1.0.14@sha256:e401f9b27b71981972916c87cafa650ee398e638226cb9ac16f4c51eb9c03b45
+              image: ghcr.io/bmbell23/funforge:1.0.20@sha256:b1daeb02521be100ec0d2f9569a8cd35efbee395265e667d89805bf228c1a5f9
               command: [python3, /app/scripts/sync_immich_faces.py]
               env:
                 - {name: IMMICH_URL, value: "http://10.0.0.160:2283"}
